@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data & uploads
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Environment
+.env
+
+# Log
+*.log
+server.log
+
+# Node / WhatsApp bridge
+whatsapp-bridge/node_modules/
+whatsapp-bridge/auth/
+
+# Vendor tesseract (salinan lokal, bisa diunduh ulang)
+vendor/
+
+# OS
+.DS_Store
+*.AppImage

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sales Canvas — Dashboard Analisa</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #141b33;
+    --panel-2: #1a2342;
+    --border: #263055;
+    --text: #e8ecf8;
+    --muted: #93a0c4;
+    --accent: #6c8cff;
+    --accent-2: #22d3a5;
+    --danger: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background:
+      radial-gradient(1000px 500px at 80% -10%, rgba(108,140,255,.15), transparent 60%),
+      radial-gradient(800px 400px at 0% 0%, rgba(34,211,165,.08), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center; font-size: 22px;
+    box-shadow: 0 8px 24px rgba(108,140,255,.35);
+  }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .top-actions { display: flex; gap: 10px; align-items: center; }
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: transform .15s, border-color .15s, background .15s;
+  }
+  .btn:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--accent-2); margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px;
+    position: relative; overflow: hidden;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .card .value { font-size: 26px; font-weight: 800; margin-top: 8px; letter-spacing: -.02em; }
+  .card .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .card .icon { position: absolute; right: 16px; top: 16px; font-size: 22px; opacity: .5; }
+  .grow-up { color: var(--accent-2); font-weight: 700; }
+  .grow-down { color: var(--danger); font-weight: 700; }
+
+  .grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 18px;
+  }
+  .panel h2 { font-size: 14px; font-weight: 700; margin-bottom: 14px; color: var(--text); display:flex; align-items:center; justify-content: space-between; }
+  .chart-box { position: relative; height: 300px; }
+  .chart-box.sm { height: 240px; }
+  .seg { display: flex; gap: 4px; background: var(--bg); border-radius: 8px; padding: 3px; }
+  .seg button { border: 0; background: transparent; color: var(--muted); padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .seg button.active { background: var(--panel-2); color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid rgba(38,48,85,.5); }
+  tr:hover td { background: rgba(108,140,255,.05); }
+  .tag { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .tag.tg { background: rgba(108,140,255,.16); color: var(--accent); }
+  .tag.wa { background: rgba(34,211,165,.16); color: var(--accent-2); }
+  .conf-h { color: var(--accent-2); } .conf-m { color: var(--warn); } .conf-l { color: var(--danger); }
+
+  .empty { color: var(--muted); text-align: center; padding: 40px 10px; font-size: 14px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 26px; }
+
+  @media (max-width: 900px) {
+    .grid, .grid-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">🧾</div>
+    <div>
+      <h1>Sales Canvas Dashboard</h1>
+      <div class="sub"><span class="dot"></span>Analisa penjualan dari struk — Telegram & WhatsApp</div>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button class="btn" onclick="loadAll()">🔄 Muat Ulang</button>
+  </div>
+</header>
+
+<section class="stats">
+  <div class="card"><div class="icon">💰</div><div class="label">Total Pendapatan</div><div class="value" id="s-revenue">—</div><div class="hint" id="s-receipts">— struk</div></div>
+  <div class="card"><div class="icon">📆</div><div class="label">Hari Ini</div><div class="value" id="s-today">—</div><div class="hint" id="s-today-count">— struk</div></div>
+  <div class="card"><div class="icon">📈</div><div class="label">Bulan Ini vs Bulan Lalu</div><div class="value" id="s-month">—</div><div class="hint" id="s-growth">—</div></div>
+  <div class="card"><div class="icon">🏷️</div><div class="label">Rata-rata / Struk</div><div class="value" id="s-avg">—</div><div class="hint">dari seluruh data</div></div>
+</section>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Penjualan Harian
+      <span class="seg">
+        <button data-days="7" onclick="setDays(7)">7 hari</button>
+        <button data-days="30" class="active" onclick="setDays(30)">30 hari</button>
+      </span>
+    </h2>
+    <div class="chart-box"><canvas id="chart-daily"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Metode Pembayaran</h2>
+    <div class="chart-box"><canvas id="chart-payments"></canvas></div>
+  </div>
+</div>
+
+<div class="grid-3">
+  <div class="panel">
+    <h2>Produk Terlaris</h2>
+    <div class="chart-box sm"><canvas id="chart-products"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Penjualan per Jam</h2>
+    <div class="chart-box sm"><canvas id="chart-hourly"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Struk Terbaru</h2>
+    <div style="max-height:240px; overflow:auto;"><table id="tbl-receipts"></table></div>
+  </div>
+</div>
+
+<footer>Data diambil langsung dari database SQLite — otomatis diperbarui tiap 60 detik.</footer>
+
+<script>
+const fmt = (n) => n == null ? '—' : 'Rp ' + Number(n).toLocaleString('id-ID');
+let currentDays = 30;
+let charts = {};
+
+function makeChart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), cfg);
+}
+
+const GRID = 'rgba(38,48,85,.6)';
+const AXIS = { color: '#93a0c4', grid: { color: GRID }, ticks: { color: '#93a0c4' } };
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' -> ' + r.status);
+  return r.json();
+}
+
+function shortDate(d) {
+  const p = d.split('-');
+  return p[2] + '/' + p[1];
+}
+
+async function loadStats() {
+  const s = await getJSON('/api/analytics/summary');
+  document.getElementById('s-revenue').textContent = fmt(s.total_revenue);
+  document.getElementById('s-receipts').textContent = s.total_receipts + ' struk tersimpan';
+  document.getElementById('s-today').textContent = fmt(s.today_revenue);
+  document.getElementById('s-today-count').textContent = s.today_count + ' struk';
+  document.getElementById('s-month').textContent = fmt(s.month_revenue);
+  const g = document.getElementById('s-growth');
+  const gr = s.month_growth_pct;
+  g.className = gr >= 0 ? 'grow-up' : 'grow-down';
+  g.textContent = (gr >= 0 ? '▲ +' : '▼ ') + gr.toFixed(1) + '% vs bulan lalu';
+  document.getElementById('s-avg').textContent = fmt(s.avg_per_receipt);
+}
+
+async function loadDaily() {
+  const d = await getJSON('/api/analytics/daily?days=' + currentDays);
+  const dates = d.dates.map(shortDate);
+  makeChart('chart-daily', {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{
+        label: 'Pendapatan', data: d.revenue,
+        borderColor: '#6c8cff', backgroundColor: 'rgba(108,140,255,.15)',
+        fill: true, tension: .35, borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 5
+      }, {
+        label: 'Jumlah Struk', data: d.count, yAxisID: 'y2',
+        borderColor: '#22d3a5', borderDash: [5,4], borderWidth: 1.5, pointRadius: 0, fill: false
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#93a0c4' } }, tooltip: { callbacks: { label: (c) => c.dataset.label === 'Pendapatan' ? fmt(c.parsed.y) : c.parsed.y + ' struk' } } },
+      scales: { x: AXIS, y: { ...AXIS, beginAtZero: true, ticks: { ...AXIS.ticks, callback: v => 'Rp ' + (v/1000).toFixed(0) + 'k' } }, y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { color: '#22d3a5' } } }
+    }
+  });
+}
+
+async function loadProducts() {
+  const p = await getJSON('/api/analytics/products?limit=8');
+  if (!p.length) { showEmpty('chart-products'); return; }
+  makeChart('chart-products', {
+    type: 'bar',
+    data: {
+      labels: p.map(x => x.name.length > 18 ? x.name.slice(0, 17) + '…' : x.name),
+      datasets: [{
+        label: 'Pendapatan', data: p.map(x => x.revenue),
+        backgroundColor: p.map((_, i) => 'hsla(' + (210 + i * 14) + ',80%,65%,.85)'),
+        borderRadius: 8, maxBarThickness: 26
+      }]
+    },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => fmt(c.parsed.x) } } },
+      scales: { x: { ...AXIS, beginAtZero: true, ticks: { ...AXIS.ticks, callback: v => (v/1000).toFixed(0)+'k' } }, y: { ...AXIS, grid: { display: false } } } }
+  });
+}
+
+async function loadPayments() {
+  const p = await getJSON('/api/analytics/payments');
+  const canvas = document.getElementById('chart-payments');
+  if (!p.length) { showEmpty('chart-payments'); return; }
+  const total = p.reduce((a, b) => a + b.revenue, 0);
+  makeChart('chart-payments', {
+    type: 'doughnut',
+    data: {
+      labels: p.map(x => x.method + ' (' + x.count + 'x)'),
+      datasets: [{
+        data: p.map(x => x.revenue),
+        backgroundColor: ['#6c8cff', '#22d3a5', '#fbbf24', '#f87171', '#a78bfa', '#38bdf8', '#fb7185', '#34d399'],
+        borderWidth: 0, hoverOffset: 8
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#93a0c4', padding: 12, font: { size: 12 } } },
+        tooltip: { callbacks: { label: (c) => ' ' + c.label + ': ' + fmt(c.parsed) + ' (' + (c.parsed / total * 100).toFixed(1) + '%)' } }
+      }
+    }
+  });
+  const empty = canvas.parentElement.querySelector('.empty'); if (empty) empty.remove();
+}
+
+async function loadHourly() {
+  const h = await getJSON('/api/analytics/hourly');
+  const hours = Array.from({length: 24}, (_, i) => String(i).padStart(2, '0'));
+  const rev = hours.map(hh => { const f = h.find(x => String(x.hour).padStart(2, '0') === hh); return f ? f.revenue : 0; });
+  makeChart('chart-hourly', {
+    type: 'bar',
+    data: {
+      labels: hours.map((h, i) => i % 2 === 0 ? h + '.00' : ''),
+      datasets: [{ label: 'Pendapatan', data: rev, backgroundColor: 'rgba(34,211,165,.75)', borderRadius: 5, maxBarThickness: 18 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => fmt(c.parsed.y) } } },
+      scales: { x: { ...AXIS, grid: { display: false } }, y: { ...AXIS, beginAtZero: true, ticks: { ...AXIS.ticks, callback: v => (v/1000).toFixed(0)+'k' } } } }
+  });
+}
+
+async function loadReceipts() {
+  const rows = await getJSON('/api/receipts?limit=12');
+  const tbl = document.getElementById('tbl-receipts');
+  if (!rows.length) {
+    tbl.innerHTML = '<tr><td class="empty">Belum ada struk. Kirim foto struk dari bot Telegram/WhatsApp 📲</td></tr>';
+    return;
+  }
+  tbl.innerHTML = '<thead><tr><th>#</th><th>Asal</th><th>Toko</th><th>Tanggal</th><th>Total</th><th>Bayar</th><th>Akurasi</th></tr></thead><tbody>' +
+    rows.map(r => {
+      const conf = { tinggi: 'conf-h', sedang: 'conf-m', rendah: 'conf-l' }[r.confidence] || '';
+      const confLabel = { tinggi: 'Tinggi', sedang: 'Sedang', rendah: 'Rendah' }[r.confidence] || r.confidence;
+      return '<tr><td>#' + r.id + '</td>' +
+        '<td><span class="tag ' + (r.source === 'telegram' ? 'tg' : 'wa') + '">' + (r.source === 'telegram' ? 'Telegram' : 'WA') + '</span></td>' +
+        '<td>' + r.merchant + '</td>' +
+        '<td>' + (r.date !== '-' ? r.date + (r.time !== '-' ? ' ' + r.time : '') : '-') + '</td>' +
+        '<td style="font-weight:700">' + fmt(r.total) + '</td>' +
+        '<td>' + r.payment_method + '</td>' +
+        '<td class="' + conf + '">' + confLabel + '</td></tr>';
+    }).join('') + '</tbody>';
+}
+
+function showEmpty(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (charts[canvasId]) charts[canvasId].destroy();
+  let box = canvas.parentElement;
+  if (!box.querySelector('.empty')) {
+    const div = document.createElement('div');
+    div.className = 'empty';
+    div.textContent = 'Belum ada data untuk ditampilkan. 📭';
+    box.appendChild(div);
+  }
+}
+
+function setDays(n) {
+  currentDays = n;
+  document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('active', Number(b.dataset.days) === n));
+  loadDaily();
+}
+
+async function loadAll() { await Promise.allSettled([loadStats(), loadDaily(), loadProducts(), loadPayments(), loadHourly(), loadReceipts()]); }
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>

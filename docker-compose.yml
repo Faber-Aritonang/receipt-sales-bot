@@ -1,0 +1,46 @@
+# Sales Canvas Bot — orchestrasi 2 service:
+#   api     : server FastAPI + dashboard + bot Telegram
+#   bridge  : bridge WhatsApp (Baileys) yang meneruskan pesan ke api
+#
+# Cara pakai di server:
+#   cp .env.example .env                        # isi TELEGRAM_BOT_TOKEN & BRIDGE_WEBHOOK_SECRET
+#   cp whatsapp-bridge/.env.example whatsapp-bridge/.env
+#   docker compose up -d --build
+#   docker compose logs -f bridge               # scan QR WhatsApp di sini
+#   buka http://IP-SERVER:8000/dashboard
+
+services:
+  api:
+    build: .
+    container_name: sales-bot-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  bridge:
+    build: ./whatsapp-bridge
+    container_name: sales-bot-whatsapp
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      - PYTHON_API_URL=http://api:8000
+      - BRIDGE_PORT=3100
+      # Ambil dari .env root agar selalu sama dengan server Python
+      - BRIDGE_WEBHOOK_SECRET=${BRIDGE_WEBHOOK_SECRET}
+    env_file:
+      - whatsapp-bridge/.env
+    volumes:
+      # Session WhatsApp (QR sekali) tetap tersimpan walau container restart
+      - ./whatsapp-bridge/auth:/app/auth
