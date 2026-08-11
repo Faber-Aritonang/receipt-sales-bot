@@ -248,6 +248,7 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 | `TELEGRAM_ALLOWED_IDS` | ID pengguna yang boleh memakai bot (kosong = semua) |
 | `BRIDGE_WEBHOOK_SECRET` | Rahasia bersama bridge Node ↔ server Python |
 | `DASHBOARD_PASSWORD` | Password untuk membuka dashboard (kosong = tanpa login; API lain ikut terlindungi) |
+| `WATCHDOG_NOTIFY_CHAT_ID` | Chat id Telegram untuk notifikasi restart watchdog (opsional) |
 | `BACKUP_KEEP_DAYS` | Berapa hari backup DB disimpan di `data/backup/` (default 7) |
 | `QR_PASSWORD` (di `whatsapp-bridge/.env`) | Password untuk halaman QR WhatsApp (kosong = terbuka) |
 | `API_PORT` | Port dashboard (default 8000) |
@@ -283,18 +284,52 @@ Jalankan manual:
 ## ♻️ Auto-restart (watchdog)
 
 Server API dan bridge WhatsApp kadang bisa mati sendiri (koneksi putus, error
-tak terduga). `scripts/watchdog.sh` memantau keduanya dan me-restart otomatis:
+tak terduga). `scripts/watchdog.sh` memantau keduanya setiap 20 detik dan
+me-restart otomatis. Ada dua cara menjalankannya:
 
+**Cara 1 — systemd user service (disarankan, auto-start saat boot):**
 ```bash
-# jalankan sekali (background, tetap hidup setelah terminal ditutup)
-setsid nohup bash scripts/watchdog.sh > /tmp/watchdog.log 2>&1 < /dev/null &
+# sekali saja — aktifkan agar service tetap jalan tanpa login
+loginctl enable-linger $USER
 
-# cek status
+# pasang & aktifkan service
+bash scripts/install_watchdog_systemd.sh
+
+# cek status / log
+systemctl --user status sales-watchdog.service
 cat /tmp/watchdog.log
 ```
 
+**Cara 2 — manual (background):**
+```bash
+setsid nohup bash scripts/watchdog.sh > /tmp/watchdog.log 2>&1 < /dev/null &
+```
+
+### 🔔 Notifikasi restart via Telegram (opsional)
+
+Isi `WATCHDOG_NOTIFY_CHAT_ID` di `.env` (chat id Telegram Anda) — watchdog
+akan mengirim pesan ke Telegram setiap kali ia me-restart API atau bridge
+(tanpa nilai ini, fallback ke `TELEGRAM_ALLOWED_IDS` pertama; keduanya kosong
+= tanpa notifikasi).
+
 Log aktivitas bot: `tail -f /tmp/api_live.log` (API) dan
 `tail -f /tmp/bridge_live.log` (bridge WhatsApp).
+
+> ⚠️ **Penting:** service systemd menjalankan bridge dengan **Node dari nvm
+> (v20)** — Node sistem (v18) tidak mendukung `require()` modul ESM Baileys.
+> Unit file sudah menyetel PATH yang benar, jadi tidak perlu tindakan apa pun.
+
+## 🧪 Uji End-to-End Otomatis
+
+```bash
+bash scripts/e2e_test.sh
+```
+
+Memverifikasi seluruh rantai layanan sekaligus: health API & bridge, proteksi
+dashboard, perintah bot (webhook WhatsApp → laporan), **foto struk nyata**
+(OCR → tersimpan di DB → balasan "Struk tersimpan"), dan service watchdog
+systemd. Exit code 0 = semuanya sehat. Cocok dijalankan lewat cron/systemd
+timer untuk pemantauan berkala.
 
 ## 🧪 Catatan Teknis
 

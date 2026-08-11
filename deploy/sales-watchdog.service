@@ -1,0 +1,22 @@
+[Unit]
+Description=Sales Canvas watchdog (auto-restart API & WhatsApp bridge)
+Documentation=https://github.com/Faber-Aritonang/receipt-sales-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/project235
+# Node dari nvm (v20) — node sistem v18 tidak mendukung require() ESM Baileys
+Environment=PATH=%h/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash %h/project235/scripts/watchdog.sh
+# on-failure: restart hanya jika watchdog crash; keluar bersih (mis. flock
+# dipakai instance lain) TIDAK memicu restart berulang.
+Restart=on-failure
+RestartSec=5
+# biarkan watchdog menulis log sendiri ke /tmp/watchdog.log
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=default.target

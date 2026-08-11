@@ -27,16 +27,48 @@ fi
 
 log() { echo "[watchdog] $(date '+%F %T') $*" >> "$LOG"; }
 
+# ---------------------------------------------------------------------------
+# Notifikasi restart via Telegram (opsional).
+# Membaca dari .env root:
+#   - TELEGRAM_BOT_TOKEN      (wajib)
+#   - WATCHDOG_NOTIFY_CHAT_ID (chat id tujuan; kalau kosong fallback ke
+#                              TELEGRAM_ALLOWED_IDS yang pertama)
+# Tidak ada token/chat id -> notifikasi dilewati dengan tenang.
+# ---------------------------------------------------------------------------
+TG_TOKEN=""
+TG_CHAT=""
+if [ -f "$ROOT/.env" ]; then
+  TG_TOKEN="$(grep -E '^TELEGRAM_BOT_TOKEN=' "$ROOT/.env" | head -1 | cut -d= -f2- | tr -d '"\r')"
+  TG_CHAT="$(grep -E '^WATCHDOG_NOTIFY_CHAT_ID=' "$ROOT/.env" | head -1 | cut -d= -f2- | tr -d '"\r')"
+  if [ -z "$TG_CHAT" ]; then
+    TG_CHAT="$(grep -E '^TELEGRAM_ALLOWED_IDS=' "$ROOT/.env" | head -1 | cut -d= -f2- | cut -d, -f1 | tr -d '"\r')"
+  fi
+fi
+
+notify_telegram() {
+  local msg="$1"
+  if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+    return 0
+  fi
+  curl -sf -m 10 -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TG_CHAT}" \
+    --data-urlencode "text=${msg}" > /dev/null 2>&1
+}
+
 start_api() {
   cd "$ROOT" || return 1
   setsid nohup .venv/bin/python run.py > /tmp/api_live.log 2>&1 < /dev/null &
-  log "API di-restart (PID $!)"
+  local pid=$!
+  log "API di-restart (PID $pid)"
+  notify_telegram "⚠️ *Sales Canvas* — server API di-restart otomatis oleh watchdog (PID $pid)."
 }
 
 start_bridge() {
   cd "$ROOT/whatsapp-bridge" || return 1
   setsid nohup node index.js > /tmp/bridge_live.log 2>&1 < /dev/null &
-  log "bridge WhatsApp di-restart (PID $!)"
+  local pid=$!
+  log "bridge WhatsApp di-restart (PID $pid)"
+  notify_telegram "⚠️ *Sales Canvas* — bridge WhatsApp di-restart otomatis oleh watchdog (PID $pid)."
 }
 
 log "watchdog dimulai (interval ${CHECK_INTERVAL}s) di $ROOT"

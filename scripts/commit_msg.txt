@@ -1,0 +1,11 @@
+Tambahkan watchdog systemd, notifikasi restart Telegram, dan uji end-to-end
+
+- Watchdog kini bisa dipasang sebagai systemd user service
+  (deploy/sales-watchdog.service + scripts/install_watchdog_systemd.sh):
+  auto-start saat boot, Restart=on-failure, PATH Node nvm v20 (node sistem v18
+  tidak mendukung require ESM Baileys)
+- Notifikasi restart via Telegram (opsional): WATCHDOG_NOTIFY_CHAT_ID di .env,
+  fallback ke TELEGRAM_ALLOWED_IDS; watchdog mengirim pesan saat restart API/bridge
+- scripts/e2e_test.sh: uji end-to-end otomatis (API, bridge, proteksi dashboard,
+  perintah bot via webhook, OCR foto struk + pembersihan DB, service systemd)
+- README & .env.example diperbarui
