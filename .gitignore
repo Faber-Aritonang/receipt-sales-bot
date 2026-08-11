@@ -37,3 +37,6 @@ whatsapp-bridge/.seen-ids.json
 
 # whitelist nomor WhatsApp (runtime)
 whatsapp-bridge/allowed-numbers.json
+
+# file pesan commit sementara
+scripts/commit_msg.txt
