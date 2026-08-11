@@ -195,18 +195,33 @@ Perintah juga bisa diketik langsung dengan **bahasa alami** tanpa garis miring:
 ### 🔒 Batasi siapa yang boleh memakai bot WhatsApp
 
 Secara default **semua nomor** yang mengirim ke nomor WhatsApp Anda bisa
-memakai bot (mengirim struk & melihat laporan). Untuk membatasi, isi
-`WHATSAPP_ALLOWED_NUMBERS` di `whatsapp-bridge/.env`:
+memakai bot (mengirim struk & melihat laporan). Nomor yang tidak terdaftar
+otomatis ditolak (mendapat balasan "nomor tidak terdaftar"), dan pesan dari
+perangkat Anda sendiri (chat ke diri sendiri) **selalu** diproses.
 
-```env
-# format: nomor internasional tanpa '+', pisah koma
-WHATSAPP_ALLOWED_NUMBERS=6280000000000,6281111111111
-```
+**Kelola daftar nomor lewat bot Telegram** (tanpa edit file):
 
-Nomor yang tidak terdaftar otomatis ditolak (mendapat balasan "nomor tidak
-terdaftar"). Pesan dari perangkat Anda sendiri (chat ke diri sendiri) **selalu**
-diproses tanpa perlu masuk daftar. Kosongkan untuk mengizinkan semua nomor
-lagi.
+| Perintah | Fungsi |
+|---|---|
+| `/whitelist` | Lihat daftar nomor yang diizinkan |
+| `/izinkan 628123456789` | Tambah nomor WhatsApp ke whitelist |
+| `/blokir 628123456789` | Hapus nomor dari whitelist |
+
+Daftar tersimpan di `whatsapp-bridge/allowed-numbers.json` (persisten antar
+restart) dan disinkronkan langsung ke bridge. Nilai awal bisa diatur lewat
+`WHATSAPP_ALLOWED_NUMBERS` di `whatsapp-bridge/.env` (format nomor internasional
+tanpa `+`, pisah koma). Kosongkan untuk mengizinkan semua nomor lagi.
+
+> 🛡️ **Pengaman:** nomor **terakhir** di daftar tidak bisa dihapus via
+> `/blokir` — karena daftar kosong berarti kembali ke mode "semua nomor boleh".
+> Bot akan menolak dengan pesan yang jelas. Hapus manual di file jika memang
+> ingin membuka akses untuk semua orang.
+>
+> 💡 **Akun LID:** sebagian akun WhatsApp memakai identitas LID (mis.
+> `177798912163960@lid`) yang berbeda dari nomor teleponnya. Jika nomor yang
+> sudah di-whitelist tetap ditolak, cek log bridge — pesan penolakan kini
+> menampilkan **angka yang terdeteksi** dari pengirim, pakai angka itu untuk
+> `/izinkan`.
 
 > Di Telegram, tombol perintah tampil otomatis di bawah kolom ketik setelah
 > mengetik `/start` atau `/bantuan`.
@@ -278,13 +293,16 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 
 ```bash
 .venv/bin/python -m pytest tests/ -v
+node scripts/test_whitelist.js   # unit test whitelist WhatsApp (tanpa koneksi)
 ```
 
-41 test mencakup: parser struk (`app/parser.py`), perintah bot (`app/process.py`
-— termasuk bentuk nomor menu & bahasa alami), analytics (`app/analytics.py` —
-termasuk struk tanpa tanggal), alur login dashboard (`app/web/server.py`), dan
-ekspor Excel (`app/export.py`). Test memakai database sementara — data asli di
-`data/` tidak pernah tersentuh.
+45 test Python mencakup: parser struk (`app/parser.py`), perintah bot
+(`app/process.py` — termasuk bentuk nomor menu & bahasa alami), analytics
+(`app/analytics.py` — termasuk struk tanpa tanggal), alur login dashboard
+(`app/web/server.py`), ekspor Excel (`app/export.py`), dan klien whitelist
+(`app/whitelist.py`). Test memakai database sementara — data asli di `data/`
+tidak pernah tersentuh. Test Node mencakup logika whitelist di bridge
+(normalisasi nomor, add/remove/list, guard nomor terakhir, `isAllowedSender`).
 
 ## 🗄️ Backup Otomatis
 

@@ -40,18 +40,51 @@ const PORT = Number(process.env.BRIDGE_PORT || 3100);
 
 /**
  * Whitelist nomor WhatsApp yang boleh memakai bot.
- * Format: nomor internasional tanpa '+' dipisah koma, mis. 6280000000000,628123456789
+ *
+ * Sumber:
+ *   1. File whatsapp-bridge/allowed-numbers.json (jika ada) — dibuat/ diperbarui
+ *      oleh perintah bot (/izinkan, /blokir) dan endpoint /admin/whitelist.
+ *   2. Env WHATSAPP_ALLOWED_NUMBERS (format nomor internasional tanpa '+',
+ *      dipisah koma) — dipakai sebagai nilai awal bila file belum ada.
+ *
  * Kosong = SEMUA nomor boleh (kompatibel dengan setup lama).
  * Pesan dari perangkat sendiri (chat ke diri sendiri, fromMe=true) selalu
  * diproses tanpa perlu masuk whitelist.
  */
-const ALLOWED_NUMBERS = (process.env.WHATSAPP_ALLOWED_NUMBERS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .map((s) => s.replace(/\D/g, ''));
+// Path file whitelist bisa di-override lewat env (dipakai test agar tidak
+// menyentuh file asli).
+const ALLOW_LIST_FILE =
+  process.env.WHATSAPP_ALLOW_LIST_FILE || path.join(__dirname, 'allowed-numbers.json');
 
-/** Ambil angka telpon dari JID (mis. 6280000000000@s.whatsapp.net -> 6280000000000). */
+function normalizeNumber(raw) {
+  return String(raw || '').replace(/\D/g, '');
+}
+
+// nilai awal dari env, lalu ditimpa file jika ada
+let allowedNumbers = new Set(
+  (process.env.WHATSAPP_ALLOWED_NUMBERS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(normalizeNumber)
+);
+
+try {
+  const arr = JSON.parse(fs.readFileSync(ALLOW_LIST_FILE, 'utf8'));
+  if (Array.isArray(arr)) allowedNumbers = new Set(arr.map(normalizeNumber).filter(Boolean));
+} catch (_) {
+  /* file belum ada / rusak -> pakai nilai env */
+}
+
+function saveAllowList() {
+  try {
+    fs.writeFileSync(ALLOW_LIST_FILE, JSON.stringify([...allowedNumbers], null, 0));
+  } catch (e) {
+    console.error('[bridge] gagal simpan whitelist:', e.message);
+  }
+}
+
+/** Ambil angka telpon dari JID (mis. 628123456789@s.whatsapp.net -> 628123456789). */
 function numberFromJid(jid) {
   if (!jid) return '';
   return jid.split('@')[0].replace(/\D/g, '');
@@ -59,8 +92,50 @@ function numberFromJid(jid) {
 
 /** Apakah nomor pengirim boleh memakai bot? (kosong = semua boleh) */
 function isAllowedSender(jid) {
-  if (!ALLOWED_NUMBERS.length) return true;
-  return ALLOWED_NUMBERS.includes(numberFromJid(jid));
+  if (!allowedNumbers.size) return true;
+  return allowedNumbers.has(numberFromJid(jid));
+}
+
+/** Apakah format nomor masuk akal (8–15 digit, tanpa kode area yang aneh)? */
+function validPhoneNumber(n) {
+  return n.length >= 8 && n.length <= 15;
+}
+
+/** Tambah nomor ke whitelist (persisten). */
+function waWhitelistAdd(number) {
+  const n = normalizeNumber(number);
+  if (!n) return { ok: false, error: 'nomor tidak valid' };
+  if (!validPhoneNumber(n)) {
+    return { ok: false, error: 'format nomor tidak masuk akal (8–15 digit)' };
+  }
+  allowedNumbers.add(n);
+  saveAllowList();
+  return { ok: true, allowed: [...allowedNumbers] };
+}
+
+/** Hapus nomor dari whitelist (persisten). */
+function waWhitelistRemove(number) {
+  const n = normalizeNumber(number);
+  if (!n) return { ok: false, error: 'nomor tidak valid' };
+  if (!allowedNumbers.has(n)) {
+    return { ok: false, error: 'nomor tidak ada di daftar' };
+  }
+  // JANGAN izinkan menghapus nomor terakhir: set kosong = mode "semua boleh",
+  // sehingga blokir tanpa sengaja akan membuka bot untuk semua orang.
+  if (allowedNumbers.size <= 1) {
+    return {
+      ok: false,
+      error: 'tidak bisa menghapus nomor terakhir — bot akan terbuka untuk semua orang',
+    };
+  }
+  allowedNumbers.delete(n);
+  saveAllowList();
+  return { ok: true, allowed: [...allowedNumbers] };
+}
+
+/** Daftar nomor yang saat ini diizinkan. */
+function waWhitelistList() {
+  return { ok: true, allowed: [...allowedNumbers] };
 }
 
 /**
@@ -379,6 +454,16 @@ function startExpress() {
       res.status(500).json({ ok: false, error: String(e) });
     }
   });
+  // Kelola whitelist nomor WhatsApp dari Python (perintah bot).
+  // Body JSON: { action: 'add'|'remove'|'list', number?: '628xxxx' }
+  app.post('/admin/whitelist', (req, res) => {
+    if (req.headers['x-secret'] !== SECRET) return res.status(401).json({ ok: false });
+    const { action, number } = req.body || {};
+    if (action === 'add') return res.json(waWhitelistAdd(number));
+    if (action === 'remove') return res.json(waWhitelistRemove(number));
+    if (action === 'list') return res.json(waWhitelistList());
+    return res.status(400).json({ ok: false, error: 'action harus add | remove | list' });
+  });
   app.get('/health', (req, res) => res.json({ ok: !!sockRef }));
 
   // QR sebagai gambar: /qr.png (PNG mentah) dan /qr (halaman dengan auto-refresh)
@@ -539,7 +624,15 @@ async function start() {
       // Whitelist: pesan dari nomor LAIN (bukan perangkat sendiri) hanya
       // diproses bila nomornya terdaftar di WHATSAPP_ALLOWED_NUMBERS.
       if (!msg.key.fromMe && !isAllowedSender(sender)) {
-        console.log('[bridge] ⛔ ditolak (nomor tidak terdaftar):', sender);
+        // tampilkan nomor ternormalisasi: untuk akun LID (mis. 1234567890@lid)
+        // yang tercetak bukan nomor telepon — pemilik perlu tahu angka yang
+        // harus ditambahkan ke whitelist
+        console.log(
+          '[bridge] ⛔ ditolak (nomor tidak terdaftar):',
+          sender,
+          '-> angka terdeteksi:',
+          numberFromJid(sender)
+        );
         try {
           await sendText(
             sock,
@@ -624,4 +717,9 @@ module.exports = {
   isRecent,
   numberFromJid,
   isAllowedSender,
+  normalizeNumber,
+  waWhitelistAdd,
+  waWhitelistRemove,
+  waWhitelistList,
+  validPhoneNumber,
 };
