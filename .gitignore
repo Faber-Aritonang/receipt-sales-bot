@@ -30,3 +30,7 @@ vendor/
 
 # QR WhatsApp (aktif) — jangan di-push
 whatsapp-bridge/qr.png
+auth/
+
+# id pesan bridge (dedup, runtime)
+whatsapp-bridge/.seen-ids.json

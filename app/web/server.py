@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from .. import analytics, config, database as db, export
+from .. import analytics, backup, config, database as db, export
 from ..bots.whatsapp_api import router as whatsapp_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,7 +24,9 @@ _SESSION_TTL = 7 * 24 * 3600
 _sessions: dict[str, float] = {}
 
 # Path yang selalu publik (tanpa login)
-_PUBLIC_PREFIXES = ("/api/health", "/api/whatsapp", "/login", "/logout")
+# ("qr" ikut publik: hanya redirect ke bridge; halaman QR-nya sendiri sudah
+# dilindungi QR_PASSWORD di bridge)
+_PUBLIC_PREFIXES = ("/api/health", "/api/whatsapp", "/login", "/logout", "/qr")
 
 
 def _is_public(path: str) -> bool:
@@ -34,6 +36,13 @@ def _is_public(path: str) -> bool:
 def _protected() -> bool:
     """True jika password dashboard di-set (proteksi aktif)."""
     return bool(config.DASHBOARD_PASSWORD)
+
+
+def _bridge_url(request: Request) -> str:
+    """URL dasar bridge WhatsApp: host request + BRIDGE_PORT (fallback BRIDGE_URL)."""
+    host = request.headers.get("host", "")
+    hostname = host.split(":")[0] if host else ""
+    return f"http://{hostname}:{config.BRIDGE_PORT}" if hostname else config.BRIDGE_URL
 
 
 def _session_valid(token: str | None) -> bool:
@@ -117,6 +126,11 @@ def _login_page(error: bool = False) -> HTMLResponse:
 
 def create_app() -> FastAPI:
     db.init_db()
+    # backup otomatis saat server start (hanya jika belum ada backup hari ini)
+    try:
+        backup.run_backup()
+    except Exception:
+        log.exception("gagal menjalankan backup saat start")
     app = FastAPI(title="Sales Canvas API", version="1.0.0")
     app.include_router(whatsapp_router)
 
@@ -166,6 +180,20 @@ def create_app() -> FastAPI:
         resp = RedirectResponse("/login", status_code=302)
         resp.delete_cookie(_SESSION_COOKIE)
         return resp
+
+    @app.get("/qr", include_in_schema=False)
+    async def qr_redirect(request: Request):
+        """Arahkan /qr (yang sering salah dibuka di port API 8000) ke bridge.
+
+        Memakai host yang sama dengan request agar bekerja dari localhost maupun
+        VPS; fallback ke config.BRIDGE_URL bila host tidak tersedia.
+        """
+        return RedirectResponse(f"{_bridge_url(request)}/qr", status_code=302)
+
+    @app.get("/qr.png", include_in_schema=False)
+    async def qr_png_redirect(request: Request):
+        """Gambar QR mentah juga ada di bridge — arahkan ke sana."""
+        return RedirectResponse(f"{_bridge_url(request)}/qr.png", status_code=302)
 
     @app.get("/api/health")
     async def health():

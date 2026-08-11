@@ -14,6 +14,18 @@ def _receipts_df() -> pd.DataFrame:
     return db.query_df("SELECT * FROM receipts WHERE total IS NOT NULL")
 
 
+def _effective_dates(df: pd.DataFrame) -> pd.Series:
+    """Tanggal efektif tiap struk.
+
+    Bila OCR tidak bisa membaca tanggal struk (receipt_date kosong), struk
+    dianggap terjadi pada tanggal upload (created_at) — biasanya hari ini,
+    sehingga laporan harian tidak menampilkan "0 struk" untuk data baru.
+    """
+    d = df["receipt_date"].fillna("").astype(str).str.strip()
+    fallback = df["created_at"].fillna("").astype(str).str[:10]
+    return d.mask(d.isin(["", "None"]), fallback)
+
+
 def summary() -> dict:
     """Ringkasan menyeluruh: total, rata-rata, hari ini, bulan ini vs bulan lalu."""
     df = _receipts_df()
@@ -29,16 +41,16 @@ def summary() -> dict:
         "month_growth_pct": 0.0,
     }
     if len(df):
-        today_df = df[df["receipt_date"] == today]
+        eff = _effective_dates(df)
+        today_df = df[eff == today]
         out["today_count"] = int(len(today_df))
         out["today_revenue"] = float(today_df["total"].sum())
         month = today[:7]
-        dates = df["receipt_date"].dropna()
-        cur = df[df["receipt_date"].astype(str).str.startswith(month)]
+        cur = df[eff.str.startswith(month)]
         out["month_revenue"] = float(cur["total"].sum())
         ym = pd.to_datetime(today + "-01") - pd.DateOffset(months=1)
         prev = ym.strftime("%Y-%m")
-        prev_df = df[df["receipt_date"].astype(str).str.startswith(prev)]
+        prev_df = df[eff.str.startswith(prev)]
         out["prev_month_revenue"] = float(prev_df["total"].sum())
         if out["prev_month_revenue"]:
             out["month_growth_pct"] = round(
@@ -55,8 +67,7 @@ def daily_series(days: int = 30) -> dict:
     df = _receipts_df()
     if len(df) == 0:
         return {"dates": [], "revenue": [], "count": []}
-    df = df[df["receipt_date"].notna()].copy()
-    df["receipt_date"] = df["receipt_date"].astype(str)
+    df["receipt_date"] = _effective_dates(df)
     end = pd.Timestamp.today().normalize()
     start = end - pd.Timedelta(days=days - 1)
     g = (
@@ -112,11 +123,18 @@ def payment_breakdown() -> list[dict]:
     ]
 
 
-def hourly_series() -> list[dict]:
-    """Penjualan per jam (jam struk masuk/dicetak)."""
-    df = db.query_df("SELECT receipt_time, total FROM receipts WHERE total IS NOT NULL")
+def hourly_series(day: str | None = None) -> list[dict]:
+    """Penjualan per jam (jam struk masuk/dicetak).
+
+    day diberikan -> hanya struk dengan tanggal efektif = day (untuk laporan harian).
+    """
+    df = db.query_df(
+        "SELECT receipt_date, receipt_time, total, created_at FROM receipts WHERE total IS NOT NULL"
+    )
     if len(df) == 0:
         return []
+    if day:
+        df = df[_effective_dates(df) == day]
     df = df[df["receipt_time"].notna()].copy()
     df["hour"] = df["receipt_time"].str.split(":").str[0].astype(int)
     g = df.groupby("hour").agg(revenue=("total", "sum"), count=("total", "size")).reset_index()
@@ -154,7 +172,7 @@ def _money(v: float) -> str:
 
 def report_daily() -> str:
     s = summary()
-    h = hourly_series()
+    h = hourly_series(day=db.today_iso())
     lines = ["📆 *LAPORAN HARIAN*", ""]
     lines.append(f"📊 Total hari ini: {s['today_count']} struk")
     lines.append(f"💰 Pendapatan hari ini: {_money(s['today_revenue'])}")
@@ -169,12 +187,14 @@ def report_daily() -> str:
 
 
 def report_weekly() -> str:
-    df = db.query_df("SELECT receipt_date, total FROM receipts WHERE total IS NOT NULL AND receipt_date IS NOT NULL")
+    df = db.query_df(
+        "SELECT receipt_date, total, created_at FROM receipts WHERE total IS NOT NULL"
+    )
     lines = ["🗓️ *LAPORAN 7 HARI TERAKHIR*", ""]
     if len(df) == 0:
         lines.append("Belum ada data penjualan.")
         return "\n".join(lines)
-    df["receipt_date"] = df["receipt_date"].astype(str)
+    df["receipt_date"] = _effective_dates(df)
     end = pd.Timestamp.today().normalize()
     start = end - pd.Timedelta(days=6)
     g = df.groupby("receipt_date")["total"].sum().reset_index()

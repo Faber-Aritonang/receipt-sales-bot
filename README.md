@@ -23,8 +23,13 @@ perintah laporan ◀────────────┘            dashboard
 | 🗄️ Database | SQLite (tabel `receipts` & `items`) |
 | 📊 Dashboard web | penjualan harian, produk terlaris, metode bayar, penjualan per jam, struk terbaru |
 | 🤖 Perintah laporan | `/laporanharian`, `/laporanmingguan`, `/laporanbulanan`, `/produkterlaris`, `/total` (bisa juga dengan garis bawah: `/laporan_harian`, dst.) |
-| 🎛️ Tombol WhatsApp | ketik `menu`/`tombol`/`bantuan` di WhatsApp → tombol perintah interaktif (fallback: balas angka `1`–`7`) |
+| 🎛️ Menu WhatsApp | ketik `menu`/`tombol`/`bantuan` → daftar bernomor `1`–`7` (bekerja di Web/Desktop/HP) + tombol interaktif (bisa diketuk di HP) |
 | 📥 Ekspor Excel | tombol **Download Excel** di dashboard atau `/export` di Telegram → file `.xlsx` (sheet Struk + Item) |
+| 📆 Laporan selalu terisi | struk tanpa tanggal (OCR gagal baca) dihitung sebagai penjualan hari ini — laporan harian tidak lagi "0 struk" |
+| 🛡️ Anti respond-sendiri | dedup id pesan (tersimpan ke file) + filter pesan lama dari perangkat sendiri — bot tidak membalas pesan lama/duplikat |
+| 🗄️ Backup otomatis | DB SQLite di-backup otomatis ke `data/backup/` (tiap start + harian), disimpan 7 hari |
+| ♻️ Auto-restart | `scripts/watchdog.sh` memantau & me-restart bridge WhatsApp dan server API bila mati |
+| ✅ Unit test | `pytest tests/` (41 test) — parser, perintah bot, analytics, alur login, ekspor |
 | 🔌 Tanpa sudo | Tesseract bisa disalin ke folder `vendor/` (sudah disertakan) |
 
 ---
@@ -132,6 +137,10 @@ QR juga otomatis **disimpan sebagai gambar** (`whatsapp-bridge/qr.png`) dan bisa
 auto-refresh tiap beberapa detik) — praktis untuk VPS tanpa layar langsung.
 Endpoint mentahnya: `GET /qr.png`.
 
+> Sering salah port? Buka **http://localhost:8000/qr** (port API) juga bisa —
+> otomatis dialihkan ke bridge (port 3100). Berlaku juga untuk `/qr.png` dan
+> bekerja dari IP VPS (host request diteruskan sama).
+
 ### 5. Uji coba
 
 Kirim foto struk ke bot Telegram, atau ke nomor WhatsApp Anda.
@@ -148,6 +157,11 @@ Buka dashboard: **http://localhost:8000/dashboard**
 > bisa diakses siapa saja yang tahu alamat server-nya. Endpoint webhook WhatsApp
 > (`/api/whatsapp/*`) dan `/api/health` selalu publik (webhook sudah memakai
 > `BRIDGE_WEBHOOK_SECRET` sendiri).
+>
+> 🔒 **Halaman QR WhatsApp** (`http://IP:3100/qr`) juga bisa dikunci dengan
+> mengisi `QR_PASSWORD` di `whatsapp-bridge/.env` (bisa sama dengan
+> `DASHBOARD_PASSWORD`). Tanpa `QR_PASSWORD`, halaman QR terbuka — siapa pun
+> yang melihatnya bisa menautkan perangkat ke WhatsApp Anda.
 
 ---
 
@@ -155,7 +169,7 @@ Buka dashboard: **http://localhost:8000/dashboard**
 
 | Perintah | Fungsi |
 |---|---|
-| `/laporanharian` (`/laporan_harian`) | Penjualan hari ini + jam tersibuk |
+| `/laporanharian` (`/laporan_harian`) | Penjualan hari ini + jam tersibuk (struk tanpa tanggal dihitung hari ini) |
 | `/laporanmingguan` (`/laporan_mingguan`) | Rincian 7 hari terakhir |
 | `/laporanbulanan` (`/laporan_bulanan`) | Pendapatan bulan ini, pertumbuhan vs bulan lalu, produk terlaris |
 | `/produkterlaris` (`/produk_terlaris`) | 10 produk terlaris (berdasarkan nilai penjualan) |
@@ -165,15 +179,18 @@ Buka dashboard: **http://localhost:8000/dashboard**
 
 Perintah yang sama bisa diketik langsung di chat WhatsApp.
 
-### 🎛️ Tombol perintah di WhatsApp
+### 🎛️ Menu perintah di WhatsApp
 
-Ketik **`menu`** (atau `tombol` / `bantuan`) di chat WhatsApp → bot mengirim
-**tombol perintah interaktif** (Laporan Harian, Mingguan, Bulanan, Produk
-Terlaris, Total, Ekspor Excel, Bantuan) yang tinggal diketuk.
+Ketik **`menu`** (atau `tombol` / `bantuan`) di chat WhatsApp → bot mengirim:
 
-Jika aplikasi WhatsApp tidak menampilkan tombol (versi lama / akun tanpa
-dukungan interaktif), bot otomatis juga mengirim daftar bernomor — cukup
-balas dengan **angka `1`–`7`** untuk menjalankan perintah yang sama.
+1. **Daftar bernomor** `1`–`7` — teks biasa, **bekerja di WhatsApp Web,
+   Desktop, dan HP** (cukup balas angkanya, mis. `1` = Laporan Harian).
+2. **Tombol interaktif** — hanya bisa diketuk di **HP**. Di WhatsApp Web/Desktop
+   tombol tampil sebagai gelembung "Tersedia di WhatsApp — buka di HP"
+   (keterbatasan WhatsApp, bukan bug bot); cukup gunakan angka di Web.
+
+Perintah juga bisa diketik langsung dengan **bahasa alami** tanpa garis miring:
+`laporan harian`, `1.laporan harian`, `Laporan Harian`, dst.
 
 > Di Telegram, tombol perintah tampil otomatis di bawah kolom ketik setelah
 > mengetik `/start` atau `/bantuan`.
@@ -231,11 +248,53 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 | `TELEGRAM_ALLOWED_IDS` | ID pengguna yang boleh memakai bot (kosong = semua) |
 | `BRIDGE_WEBHOOK_SECRET` | Rahasia bersama bridge Node ↔ server Python |
 | `DASHBOARD_PASSWORD` | Password untuk membuka dashboard (kosong = tanpa login; API lain ikut terlindungi) |
+| `BACKUP_KEEP_DAYS` | Berapa hari backup DB disimpan di `data/backup/` (default 7) |
+| `QR_PASSWORD` (di `whatsapp-bridge/.env`) | Password untuk halaman QR WhatsApp (kosong = terbuka) |
 | `API_PORT` | Port dashboard (default 8000) |
 | `OCR_LANG` | Bahasa OCR (default `ind+eng`) |
 | `TESSERACT_CMD` / `TESSDATA_PREFIX` | Path tesseract (opsional, otomatis pakai vendor) |
 
 ---
+
+## 🧪 Unit Test
+
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
+
+41 test mencakup: parser struk (`app/parser.py`), perintah bot (`app/process.py`
+— termasuk bentuk nomor menu & bahasa alami), analytics (`app/analytics.py` —
+termasuk struk tanpa tanggal), alur login dashboard (`app/web/server.py`), dan
+ekspor Excel (`app/export.py`). Test memakai database sementara — data asli di
+`data/` tidak pernah tersentuh.
+
+## 🗄️ Backup Otomatis
+
+DB SQLite di-backup otomatis ke `data/backup/sales_YYYY-MM-DD_HHMMSS.db`:
+- saat server start (hanya jika belum ada backup hari ini), dan
+- sekali per 24 jam selagi server berjalan.
+
+Backup lebih dari `BACKUP_KEEP_DAYS` hari (default 7) dihapus otomatis.
+Jalankan manual:
+```bash
+.venv/bin/python -m app.backup
+```
+
+## ♻️ Auto-restart (watchdog)
+
+Server API dan bridge WhatsApp kadang bisa mati sendiri (koneksi putus, error
+tak terduga). `scripts/watchdog.sh` memantau keduanya dan me-restart otomatis:
+
+```bash
+# jalankan sekali (background, tetap hidup setelah terminal ditutup)
+setsid nohup bash scripts/watchdog.sh > /tmp/watchdog.log 2>&1 < /dev/null &
+
+# cek status
+cat /tmp/watchdog.log
+```
+
+Log aktivitas bot: `tail -f /tmp/api_live.log` (API) dan
+`tail -f /tmp/bridge_live.log` (bridge WhatsApp).
 
 ## 🧪 Catatan Teknis
 

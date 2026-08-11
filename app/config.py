@@ -18,6 +18,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.abspath(os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data")))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "sales.db"))
+# Berapa hari backup DB dipertahankan di data/backup/ sebelum dihapus otomatis
+BACKUP_KEEP_DAYS = int(os.environ.get("BACKUP_KEEP_DAYS", "7"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 

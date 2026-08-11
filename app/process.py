@@ -55,6 +55,17 @@ COMMANDS = {
 # pemetaan versi "dibersihkan" (tanpa _ / - / spasi) -> perintah kanonik
 _NORM_COMMANDS = {re.sub(r"[_\-\s]+", "", k): v for k, v in COMMANDS.items()}
 
+# angka menu fallback (sama dengan urutan tombol di bridge WhatsApp)
+NUM_COMMANDS = {
+    "1": "laporan_harian",
+    "2": "laporan_mingguan",
+    "3": "laporan_bulanan",
+    "4": "produk_terlaris",
+    "5": "total",
+    "6": "export",
+    "7": "bantuan",
+}
+
 
 def _save_image(image_bytes: bytes, source: str, sender_id: str) -> str:
     png = ocr.bytes_to_png(image_bytes)
@@ -139,10 +150,28 @@ def build_receipt_reply(p: dict, receipt_id: int, elapsed: float) -> str:
 
 
 def command_reply(text: str, sender_id: str = "") -> str:
-    """Respon untuk perintah teks (dipakai Telegram & WhatsApp)."""
-    parts = (text or "").strip().lstrip("/").lower().split()
+    """Respon untuk perintah teks (dipakai Telegram & WhatsApp).
+
+    Mengenali berbagai bentuk:
+      /laporanharian, /laporan_harian, laporanharian, Laporan Harian,
+      1.laporan harian (label menu bernomor), 1 (angka menu fallback).
+    """
+    t = (text or "").strip().lstrip("/!").lower()
+
+    # angka menu murni (fallback saat tombol WhatsApp tidak tampil): "1" -> harian
+    if t in NUM_COMMANDS:
+        t = NUM_COMMANDS[t]
+
+    # buang nomor menu di depan teks: "1.laporan harian" -> "laporan harian"
+    t = re.sub(r"^\d+\s*[.)\-]?\s*", "", t).strip()
+
+    parts = t.split()
     raw = parts[0].split("@")[0] if parts else ""
-    cmd = COMMANDS.get(raw) or _NORM_COMMANDS.get(re.sub(r"[_\-\s]+", "", raw))
+    # 1) cocokkan seluruh teks (mis. "laporan harian" -> laporanharian)
+    cmd = COMMANDS.get(t) or _NORM_COMMANDS.get(re.sub(r"[_\-\s]+", "", t))
+    # 2) fallback: kata pertama (mis. "/laporan_harian 7 hari")
+    if cmd is None:
+        cmd = COMMANDS.get(raw) or _NORM_COMMANDS.get(re.sub(r"[_\-\s]+", "", raw))
     if cmd is None:
         return (
             "❓ Perintah tidak dikenal. Kirim *foto struk* untuk mencatat penjualan,\n"

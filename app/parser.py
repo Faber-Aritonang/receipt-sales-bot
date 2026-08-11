@@ -12,6 +12,8 @@ from datetime import datetime
 
 # ---------- pola ----------
 _DATE_RE = re.compile(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b")
+# Format ISO/global: 2026-08-11 (tahun 4 digit di depan) — umum di struk modern
+_DATE_ISO_RE = re.compile(r"\b(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})\b")
 _TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b")
 _RP_RE = re.compile(r"(?:\bRp\.?\s*)?\d[\d\.,]*")
 _QTYX_RE = re.compile(r"(\d{1,3})\s*[xX*]\s*")
@@ -228,9 +230,23 @@ def parse_receipt(raw_text: str) -> dict:
 
     # ---- tanggal & jam (di baris mana pun) ----
     for line in lines:
-        dm = _DATE_RE.search(line)
-        if dm and not result["receipt_date"]:
-            result["receipt_date"] = _norm_date(dm.group(1), dm.group(2), dm.group(3))
+        if not result["receipt_date"]:
+            # 1) format ISO 2026-08-11 lebih dulu (tahun di depan)
+            im = _DATE_ISO_RE.search(line)
+            if im:
+                try:
+                    result["receipt_date"] = datetime(
+                        int(im.group(1)), int(im.group(2)), int(im.group(3))
+                    ).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+        if not result["receipt_date"]:
+            # 2) format lokal DD/MM/YY — coba semua kecocokan hingga valid
+            for dm in _DATE_RE.finditer(line):
+                d = _norm_date(dm.group(1), dm.group(2), dm.group(3))
+                if d:
+                    result["receipt_date"] = d
+                    break
         tm = _TIME_RE.search(line)
         if tm and not result["receipt_time"]:
             result["receipt_time"] = f"{int(tm.group(1)):02d}:{tm.group(2)}"

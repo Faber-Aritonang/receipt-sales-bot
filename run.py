@@ -12,10 +12,23 @@ import logging
 
 import uvicorn
 
-from app import config
+from app import backup, config
 from app.web.server import create_app
 
 log = logging.getLogger("run")
+
+
+async def _backup_loop(interval: float = 24 * 3600) -> None:
+    """Backup harian otomatis selagi server menyala (tidak memblokir server)."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            # to_thread: backup DB sinkron tidak boleh memblokir polling Telegram
+            created, removed = await asyncio.to_thread(backup.run_backup)
+            log.info("backup harian: %s (dihapus %d file lama)",
+                     created or "sudah ada hari ini", len(removed))
+        except Exception:
+            log.exception("backup harian gagal")
 
 
 async def main() -> None:
@@ -34,7 +47,7 @@ async def main() -> None:
     log.info("Dashboard: http://localhost:%s/dashboard", config.API_PORT)
 
     if tg_app is None:
-        await server.serve()
+        await asyncio.gather(server.serve(), _backup_loop())
         return
 
     async def run_telegram() -> None:
@@ -48,7 +61,7 @@ async def main() -> None:
             await tg_app.stop()
             await tg_app.shutdown()
 
-    await asyncio.gather(server.serve(), run_telegram())
+    await asyncio.gather(server.serve(), run_telegram(), _backup_loop())
 
 
 if __name__ == "__main__":

@@ -18,15 +18,18 @@
  */
 'use strict';
 
-require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
+// Pastikan .env yang dibaca adalah whatsapp-bridge/.env, bukan .env dari
+// working directory saat `node index.js` dijalankan (mis. dari root project).
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  generateWAMessageFromContent,
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
@@ -35,8 +38,89 @@ const PY_API = (process.env.PYTHON_API_URL || 'http://127.0.0.1:8000').replace(/
 const SECRET = process.env.BRIDGE_WEBHOOK_SECRET || 'ganti-ini-dengan-string-acak';
 const PORT = Number(process.env.BRIDGE_PORT || 3100);
 
+/**
+ * Proteksi halaman QR di browser.
+ * QR_PASSWORD kosong  -> tanpa login (kompatibel dengan setup lama).
+ * QR_PASSWORD terisi  -> /qr & /qr.png butuh password (cookie httpOnly 24 jam).
+ * Bisa juga diakses via URL: /qr?token=PASSWORD.
+ */
+const QR_PASSWORD = process.env.QR_PASSWORD || '';
+const QR_COOKIE = 'qr_ok';
+const QR_COOKIE_MAXAGE = 24 * 3600 * 1000; // 24 jam
+
 /** Lokasi file QR PNG (ditimpa tiap QR baru, dihapus saat sudah terhubung). */
 const QR_PNG = path.join(__dirname, 'qr.png');
+
+/**
+ * Lokasi session WhatsApp. Absolut terhadap folder index.js, bukan working
+ * directory — agar `node index.js` dari direktori mana pun tetap memakai
+ * session yang sama (cara ini juga dipakai untuk dotenv).
+ */
+const AUTH_DIR = path.join(__dirname, 'auth');
+
+/**
+ * File persist id pesan yang sudah ditangani. Dipakai agar pesan lama yang
+ * di-deliver ulang WhatsApp setelah restart/reconnect TIDAK diproses lagi
+ * (penyebab bot "merespons sendiri").
+ */
+const SEEN_FILE = path.join(__dirname, '.seen-ids.json');
+
+/** Parse string cookie sederhana (tanpa dependensi tambahan). */
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+/** Apakah request ini punya akses ke /qr (/qr.png)? */
+function qrAllowed(req) {
+  if (!QR_PASSWORD) return true; // proteksi nonaktif
+  if (req.query && req.query.token === QR_PASSWORD) return true; // via URL ?token=
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[QR_COOKIE] === '1';
+}
+
+/** Halaman login kecil untuk /qr (tema gelap seperti dashboard). */
+function qrLoginPage(showError) {
+  const err = showError
+    ? '<div class="err">⛔ Password salah. Coba lagi.</div>'
+    : '';
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Terkunci — Sales Canvas</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0b141a; color: #e9edef; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+  .card { width: min(360px, 100%); background: #111b21; border: 1px solid #263055; border-radius: 16px; padding: 30px; text-align: center; }
+  .logo { font-size: 40px; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { color: #8696a0; font-size: 13px; margin-bottom: 20px; }
+  input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #263055; background: #0b141a; color: #e9edef; font-size: 14px; outline: none; }
+  input:focus { border-color: #00a884; }
+  button { width: 100%; margin-top: 14px; padding: 12px; border: 0; border-radius: 10px; background: #00a884; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .err { margin-top: 14px; padding: 10px; border-radius: 8px; font-size: 13px; background: rgba(248,113,113,.12); border: 1px solid rgba(248,113,113,.4); color: #f87171; }
+</style>
+</head>
+<body>
+  <form class="card" method="post" action="/qrlogin">
+    <div class="logo">🔐</div>
+    <h1>QR WhatsApp Terkunci</h1>
+    <p>Masukkan password untuk melihat QR Code.</p>
+    <input type="password" name="password" placeholder="Password" autofocus required />
+    ${err}
+    <button type="submit">Masuk</button>
+  </form>
+</body>
+</html>`;
+}
 
 // ---------------------------------------------------------------------------
 // Menu & tombol
@@ -60,13 +144,17 @@ MENU.forEach((b, i) => {
 });
 const NUM_RE = new RegExp(`^[1-${MENU.length}]$`);
 
-/** Teks menu bernomor (dipakai bila tombol interaktif tidak tampil). */
+/** Teks menu bernomor (bekerja di Web, Desktop, dan HP). */
 function menuText() {
   return [
     '🤖 Sales Canvas Bot',
     '',
-    'Ketik angka di bawah, ketuk tombol, atau kirim foto struk:',
+    '📱 Di HP: ketuk tombol di bawah.',
+    '💻 Di WhatsApp Web/Desktop: ketik angka di bawah ini:',
+    '',
     ...MENU.map((b, i) => `${i + 1}. ${b.label}`),
+    '',
+    'Atau kirim foto struk untuk mencatat penjualan.',
   ].join('\n');
 }
 
@@ -103,21 +191,30 @@ function getButtonId(content) {
 /** Kirim teks menu + tombol interaktif (quick_reply native flow). */
 async function sendMenu(sock, jid) {
   // 1) teks bernomor selalu dikirim (fallback bila tombol tidak tampil)
-  await sock.sendMessage(jid, { text: menuText() });
+  await sendText(sock, jid, menuText());
   // 2) tombol interaktif
+  // Catatan: sendMessage() tidak mengenali interactiveMessage di Baileys 6.7.x
+  // (jatuh ke prepareWAMessageMedia -> "Invalid media type"). Solusi yang benar:
+  // bangun pesan via generateWAMessageFromContent lalu kirim via relayMessage().
   try {
-    await sock.sendMessage(jid, {
-      interactiveMessage: {
-        header: { title: '🤖 Sales Canvas Bot' },
-        body: { text: 'Pilih perintah:' },
-        nativeFlowMessage: {
-          buttons: MENU.map((b) => ({
-            name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id }),
-          })),
+    const msg = generateWAMessageFromContent(
+      jid,
+      {
+        interactiveMessage: {
+          header: { title: '🤖 Sales Canvas Bot' },
+          body: { text: 'Pilih perintah:' },
+          nativeFlowMessage: {
+            buttons: MENU.map((b) => ({
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id }),
+            })),
+          },
         },
       },
-    });
+      { userJid: sock.user?.id }
+    );
+    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+    rememberSentId(msg.key.id);
   } catch (e) {
     console.error('[bridge] tombol interaktif gagal dikirim (pakai angka saja):', e.message);
   }
@@ -132,7 +229,7 @@ async function forwardText(sock, jid, text) {
   form.append('secret', SECRET);
   const res = await fetch(`${PY_API}/api/whatsapp/inbound`, { method: 'POST', body: form });
   const data = await res.json();
-  if (data && data.reply) await sock.sendMessage(jid, { text: data.reply });
+  if (data && data.reply) await sendText(sock, jid, data.reply);
 }
 
 /** Unduh foto struk dan teruskan ke Python untuk di-OCR. */
@@ -153,7 +250,7 @@ async function handleImage(sock, msg, content, sender) {
   console.log('[bridge] 📷 foto diterima dari', sender, `(${buffer.length} bytes)`);
   const res = await fetch(`${PY_API}/api/whatsapp/inbound`, { method: 'POST', body: form });
   const data = await res.json();
-  if (data && data.reply) await sock.sendMessage(sender, { text: data.reply });
+  if (data && data.reply) await sendText(sock, sender, data.reply);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,17 +258,97 @@ async function handleImage(sock, msg, content, sender) {
 // ---------------------------------------------------------------------------
 
 let sockRef = null;
+let connected = false; // true jika sudah tertaut (QR tidak berlaku lagi)
+
+// Id pesan yang bridge sendiri kirim (sesi ini) — dipakai untuk membedakan
+// pesan dari perangkat lain akun yang sama (chat ke diri sendiri, fromMe=true)
+// dari pesan yang bridge buat sendiri.
+const sentMessageIds = new Set();
+const SENT_IDS_MAX = 2000;
+
+function rememberSentId(id) {
+  if (!id) return;
+  sentMessageIds.add(id);
+  if (sentMessageIds.size > SENT_IDS_MAX) {
+    sentMessageIds.delete(sentMessageIds.values().next().value);
+  }
+  // id balasan juga masuk ke set persisten -> tidak akan diproses lagi
+  rememberProcessedId(id);
+}
+
+// ---------------------------------------------------------------------------
+// Dedup & persist id pesan yang sudah ditangani
+// ---------------------------------------------------------------------------
+
+// Semua id pesan yang sudah pernah bridge tangani (kirim ATAU proses), tersimpan
+// ke file agar bertahan antar-restart.
+let seenMessageIds = new Set();
+const SEEN_IDS_MAX = 50000;
+let seenSaveTimer = null;
+
+function loadSeenIds() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8'));
+    if (Array.isArray(arr)) {
+      seenMessageIds = new Set(arr);
+      console.log(`[bridge] dimuat ${seenMessageIds.size} id pesan tersimpan`);
+    }
+  } catch (_) {
+    /* file belum ada — set tetap kosong */
+  }
+}
+
+function saveSeenIds() {
+  clearTimeout(seenSaveTimer);
+  seenSaveTimer = setTimeout(() => {
+    try {
+      fs.writeFileSync(SEEN_FILE, JSON.stringify([...seenMessageIds]));
+    } catch (e) {
+      console.error('[bridge] gagal simpan id pesan:', e.message);
+    }
+  }, 3000);
+}
+
+function rememberProcessedId(id) {
+  if (!id) return;
+  seenMessageIds.add(id);
+  if (seenMessageIds.size > SEEN_IDS_MAX) {
+    // buang id tertua agar tidak membengkak tanpa batas
+    seenMessageIds.delete(seenMessageIds.values().next().value);
+  }
+  saveSeenIds();
+}
+
+/** Apakah timestamp pesan masih baru (dalam N detik dari sekarang)? */
+function isRecent(ts, maxAgeSec = 600) {
+  if (!ts) return false;
+  // timestamp bisa berupa angka (unix), string angka, atau tanggal ISO
+  const num = Number(ts);
+  const t = Number.isFinite(num) ? num : Date.parse(ts) / 1000;
+  if (Number.isNaN(t)) return false;
+  return Date.now() / 1000 - t < maxAgeSec;
+}
+
+/** Kirim teks sambil mencatat id-nya (agar tidak diproses sebagai pesan masuk). */
+async function sendText(sock, jid, text) {
+  const sent = await sock.sendMessage(jid, { text });
+  rememberSentId(sent && sent.key && sent.key.id);
+  return sent;
+}
 
 /** Endpoint kecil agar Python bisa mengirim pesan ke WhatsApp (fitur proaktif). */
 function startExpress() {
   const app = express();
   app.use(express.json());
+  // untuk form login /qrlogin (password)
+  app.use(express.urlencoded({ extended: false }));
   app.post('/send', async (req, res) => {
     const { to, text } = req.body || {};
     if (req.headers['x-secret'] !== SECRET) return res.status(401).json({ ok: false });
     if (!sockRef || !to || !text) return res.status(400).json({ ok: false });
     try {
-      await sockRef.sendMessage(to, { text });
+      const sent = await sockRef.sendMessage(to, { text });
+      rememberSentId(sent && sent.key && sent.key.id);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false, error: String(e) });
@@ -180,13 +357,54 @@ function startExpress() {
   app.get('/health', (req, res) => res.json({ ok: !!sockRef }));
 
   // QR sebagai gambar: /qr.png (PNG mentah) dan /qr (halaman dengan auto-refresh)
+  app.post('/qrlogin', (req, res) => {
+    const pw = (req.body && req.body.password) || '';
+    if (!QR_PASSWORD || pw !== QR_PASSWORD) {
+      return res.type('html').send(qrLoginPage(true));
+    }
+    res.setHeader(
+      'Set-Cookie',
+      `${QR_COOKIE}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(QR_COOKIE_MAXAGE / 1000)}`
+    );
+    res.redirect('/qr');
+  });
   app.get('/qr.png', (req, res) => {
+    if (!qrAllowed(req)) {
+      return res.status(403).type('text/plain').send('Forbidden — butuh password (lihat /qr).');
+    }
     if (!fs.existsSync(QR_PNG)) {
       return res.status(404).type('text/plain').send('QR belum tersedia — tunggu beberapa detik.');
     }
     res.sendFile(QR_PNG);
   });
   app.get('/qr', (req, res) => {
+    if (!qrAllowed(req)) {
+      return res.type('html').send(qrLoginPage(false));
+    }
+    // Status khusus: sudah tertaut -> QR tidak diperlukan lagi
+    let content;
+    if (connected) {
+      content = `
+  <h1>✅ WhatsApp Terhubung</h1>
+  <p>Bot sudah tertaut ke WhatsApp Anda — <b>tidak perlu scan QR lagi</b>.<br>Kirim <b>foto struk</b> atau ketik <b>menu</b> di chat WhatsApp untuk mencoba.</p>
+  <div class="badge" style="background:#22c55e">Status: terhubung</div>`;
+    } else if (!fs.existsSync(QR_PNG)) {
+      content = `
+  <h1>📲 Menunggu QR…</h1>
+  <p>QR belum tersedia. Halaman ini otomatis memuat ulang — tunggu beberapa detik.</p>
+  <div class="badge">Menyiapkan QR…</div>`;
+    } else {
+      content = `
+  <h1>📲 Scan QR WhatsApp</h1>
+  <p>Buka <b>WhatsApp → Pengaturan → Perangkat tertaut</b> lalu scan gambar di bawah ini.<br>Halaman ini otomatis memuat ulang QR setiap beberapa detik.</p>
+  <img id="qr" src="/qr.png" alt="QR Code">
+  <div class="badge">Menunggu scan…</div>
+<script>
+  const img = document.getElementById('qr');
+  function refresh() { img.src = '/qr.png?t=' + Date.now(); }
+  setInterval(refresh, 4000);
+</script>`;
+    }
     const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -196,21 +414,13 @@ function startExpress() {
 <style>
   body { font-family: system-ui, sans-serif; background: #0b141a; color: #e9edef; display: flex; flex-direction: column; align-items: center; padding: 24px; }
   h1 { font-size: 20px; margin: 0 0 6px; }
-  p { color: #8696a0; margin: 4px 0 20px; text-align: center; }
+  p { color: #8696a0; margin: 4px 0 20px; text-align: center; max-width: 420px; line-height: 1.5; }
   img { width: min(320px, 80vw); height: auto; border-radius: 12px; background: #fff; padding: 8px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
   .badge { background: #00a884; color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 13px; margin-top: 18px; }
 </style>
 </head>
 <body>
-  <h1>📲 Scan QR WhatsApp</h1>
-  <p>Buka <b>WhatsApp → Pengaturan → Perangkat tertaut</b> lalu scan gambar di bawah ini.<br>Halaman ini otomatis memuat ulang QR setiap beberapa detik.</p>
-  <img id="qr" src="/qr.png" alt="QR Code">
-  <div class="badge">Menunggu scan…</div>
-<script>
-  const img = document.getElementById('qr');
-  function refresh() { img.src = '/qr.png?t=' + Date.now(); }
-  setInterval(refresh, 4000);
-</script>
+${content}
 </body>
 </html>`;
     res.type('html').send(html);
@@ -224,7 +434,7 @@ function startExpress() {
 // ---------------------------------------------------------------------------
 
 async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth');
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const sock = makeWASocket({ auth: state, browser: ['Sales Canvas', 'Chrome', '1.0'] });
   sockRef = sock;
 
@@ -256,22 +466,53 @@ async function start() {
       }
     } else if (connection === 'open') {
       // QR sudah tidak berlaku lagi — hapus gambar agar tidak discan ulang
+      connected = true;
       fs.rmSync(QR_PNG, { force: true });
       console.log('[bridge] ✅ WhatsApp terhubung! Kirim foto struk, atau ketik "menu" untuk tombol perintah.');
+    }
+    // saat koneksi tertutup / logout, QR mungkin diperlukan lagi
+    if (connection === 'close') {
+      connected = false;
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (msg.key.fromMe || !msg.message) continue;
       const sender = msg.key.remoteJid;
+      const msgId = msg.key.id;
+
+      // 1) sudah pernah ditangani (dikirim/diproses, termasuk sesi sebelumnya)
+      if (seenMessageIds.has(msgId)) {
+        console.log('[bridge] diabaikan (sudah diproses):', msgId);
+        continue;
+      }
+      // 2) pesan yang bridge sendiri kirim sesi ini
+      if (msg.key.fromMe && sentMessageIds.has(msgId)) {
+        console.log('[bridge] diabaikan (balasan sendiri):', msgId);
+        continue;
+      }
+      // 3) pesan dari perangkat lain akun yang sama (chat ke diri sendiri dari
+      //    HP) — HANYA diproses bila BARU. Pesan lama yang di-deliver ulang
+      //    setelah reconnect/restart (umur > 10 menit) diabaikan, ini penyebab
+      //    utama bot "merespons sendiri".
+      if (msg.key.fromMe && !isRecent(msg.messageTimestamp, 600)) {
+        console.log('[bridge] diabaikan (pesan sendiri lama, umur > 10m):', msgId);
+        continue;
+      }
+      if (!msg.message) {
+        console.log('[bridge] diabaikan (tanpa isi):', sender || '(no jid)');
+        continue;
+      }
       // hanya chat 1:1 — abaikan status broadcast & grup
       // (jangan whitelist suffix @s.whatsapp.net: akun LID bisa memakai @lid)
       if (!sender || sender === 'status@broadcast' || sender.includes('@g.us')) continue;
 
       const content = unwrapEphemeral(msg.message);
       if (!content) continue;
+
+      // tandai sudah diproses SEBELUM await (duplikat langsung dilewati)
+      rememberProcessedId(msgId);
 
       try {
         // 1) User mengetuk tombol menu
@@ -308,12 +549,13 @@ async function start() {
           continue;
         }
 
-        console.log('[bridge] 💬 teks diterima dari', sender, ':', textMsg.trim());
+        const ageMin = Math.round((Date.now() / 1000 - (Number(msg.messageTimestamp) || Date.now() / 1000)) / 60);
+        console.log('[bridge] 💬 teks diterima dari', sender, `(fromMe=${msg.key.fromMe}, umur=${ageMin}m):`, textMsg.trim());
         await forwardText(sock, sender, textMsg.trim());
       } catch (e) {
         console.error('[bridge] error memproses pesan dari', sender, ':', e);
         try {
-          await sock.sendMessage(sender, { text: '⚠️ Terjadi kesalahan saat memproses pesan. Coba lagi.' });
+          await sendText(sock, sender, '⚠️ Terjadi kesalahan saat memproses pesan. Coba lagi.');
         } catch (_) {
           /* abaikan */
         }
@@ -323,8 +565,9 @@ async function start() {
 }
 
 if (require.main === module) {
+  loadSeenIds();
   startExpress();
   start().catch((e) => console.error('[bridge] fatal:', e));
 }
 
-module.exports = { MENU, NUM_TO_CMD, menuText, unwrapEphemeral, getButtonId, sendMenu };
+module.exports = { MENU, NUM_TO_CMD, menuText, unwrapEphemeral, getButtonId, sendMenu, isRecent };
