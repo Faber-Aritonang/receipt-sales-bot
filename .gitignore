@@ -27,3 +27,6 @@ vendor/
 # OS
 .DS_Store
 *.AppImage
+
+# QR WhatsApp (aktif) — jangan di-push
+whatsapp-bridge/qr.png

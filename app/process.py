@@ -18,28 +18,42 @@ Cara pakai:
 1️⃣ Kirim *foto struk* — otomatis dibaca (OCR), disimpan ke database, lalu dirangkum.
 2️⃣ Kirim perintah di bawah untuk melihat analisa:
 
-📆 /laporan_harian — penjualan hari ini
-🗓️ /laporan_mingguan — 7 hari terakhir
-📅 /laporan_bulanan — bulan ini + produk terlaris
-🏆 /produk_terlaris — 10 produk terlaris
+📆 /laporanharian — penjualan hari ini
+🗓️ /laporanmingguan — 7 hari terakhir
+📅 /laporanbulanan — bulan ini + produk terlaris
+🏆 /produkterlaris — 10 produk terlaris
 💼 /total — ringkasan semua data
+📥 /export — unduh seluruh data sebagai file Excel (.xlsx)
 ❓ /bantuan — bantuan ini
+
+💡 Perintah juga bisa memakai garis bawah (mis. /laporan_harian).
 
 📊 Dashboard web: http://localhost:8000/dashboard
 """
 
 COMMANDS = {
+    # perintah dapat diketik dengan atau tanpa garis bawah, keduanya dikenali
     "laporan_harian": "laporan_harian",
+    "laporanharian": "laporan_harian",
     "laporan_mingguan": "laporan_mingguan",
+    "laporanmingguan": "laporan_mingguan",
     "laporan_bulanan": "laporan_bulanan",
+    "laporanbulanan": "laporan_bulanan",
     "produk_terlaris": "produk_terlaris",
+    "produkterlaris": "produk_terlaris",
     "total": "total",
     "ringkasan": "total",
+    "export": "export",
     "bantuan": "bantuan",
     "help": "bantuan",
+    "menu": "bantuan",
+    "tombol": "bantuan",
     "mulai": "bantuan",
     "start": "bantuan",
 }
+
+# pemetaan versi "dibersihkan" (tanpa _ / - / spasi) -> perintah kanonik
+_NORM_COMMANDS = {re.sub(r"[_\-\s]+", "", k): v for k, v in COMMANDS.items()}
 
 
 def _save_image(image_bytes: bytes, source: str, sender_id: str) -> str:
@@ -126,8 +140,9 @@ def build_receipt_reply(p: dict, receipt_id: int, elapsed: float) -> str:
 
 def command_reply(text: str, sender_id: str = "") -> str:
     """Respon untuk perintah teks (dipakai Telegram & WhatsApp)."""
-    cmd = (text or "").strip().lstrip("/").lower().split()[0] if text else ""
-    cmd = COMMANDS.get(cmd)
+    parts = (text or "").strip().lstrip("/").lower().split()
+    raw = parts[0].split("@")[0] if parts else ""
+    cmd = COMMANDS.get(raw) or _NORM_COMMANDS.get(re.sub(r"[_\-\s]+", "", raw))
     if cmd is None:
         return (
             "❓ Perintah tidak dikenal. Kirim *foto struk* untuk mencatat penjualan,\n"
@@ -145,4 +160,12 @@ def command_reply(text: str, sender_id: str = "") -> str:
         return analytics.report_monthly()
     if cmd == "produk_terlaris":
         return analytics.report_top_products()
+    if cmd == "export":
+        # Bridge WhatsApp hanya bisa kirim teks; arahkan ke dashboard untuk unduhan
+        return (
+            "📥 *Ekspor Excel*\n\n"
+            "Di WhatsApp file tidak bisa dikirim langsung. "
+            "Unduh di dashboard: `http://localhost:8000/dashboard` → tombol *Download Excel*.\n\n"
+            "Di Telegram, gunakan /export dan file .xlsx akan dikirim ke chat."
+        )
     return HELP_TEXT

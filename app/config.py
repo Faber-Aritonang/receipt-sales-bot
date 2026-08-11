@@ -7,7 +7,10 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: nilai .env selalu menang, bahkan jika variabel yang sama
+# sudah ada di environment sistem dengan nilai kosong (mis. saat restart
+# dari sesi shell yang mengekspor TELEGRAM_BOT_TOKEN="").
+load_dotenv(override=True)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -34,6 +37,11 @@ BRIDGE_WEBHOOK_SECRET = os.environ.get("BRIDGE_WEBHOOK_SECRET", "ganti-ini-denga
 # ---- Server API / Dashboard ----
 API_HOST = os.environ.get("API_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("API_PORT", "8000"))
+
+# Password untuk mengakses dashboard web (kosongkan = tanpa login).
+# Jika diisi, semua halaman & API (kecuali /api/health dan webhook
+# WhatsApp yang sudah pakai BRIDGE_WEBHOOK_SECRET) wajib login dulu.
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
 # ---- OCR (Tesseract) ----
 import shutil
