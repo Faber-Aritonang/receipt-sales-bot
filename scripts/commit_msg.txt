@@ -1,8 +1,0 @@
-Kelola whitelist WhatsApp via bot Telegram + pengaman dari review
-
-- Bridge: whitelist persisten ke allowed-numbers.json + endpoint /admin/whitelist (add/remove/list, dilindungi x-secret)
-- Telegram: perintah /izinkan /blokir /whitelist (hanya pengguna terdaftar)
-- Pengaman: nomor terakhir tidak bisa dihapus (set kosong = mode semua boleh), validasi format nomor 8-15 digit, blokir nomor tak terdaftar memberi pesan jelas
-- Log penolakan menampilkan angka terdeteksi (berguna untuk akun LID)
-- Test: scripts/test_whitelist.js (25 kasus, tanpa koneksi WhatsApp), 45 pytest, 7 e2e
-- README: dokumentasi perintah, pengaman, catatan LID, cara jalankan test Node
