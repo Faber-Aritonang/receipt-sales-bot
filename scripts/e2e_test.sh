@@ -8,7 +8,11 @@
 #   3. dashboard terkunci (302 tanpa login)
 #   4. perintah bot (text) -> balasan laporan via webhook WhatsApp
 #   5. foto struk (image)  -> OCR -> tersimpan di DB -> balasan "Struk tersimpan"
-#   6. watchdog systemd aktif
+#   6. whitelist WhatsApp (add/remove/list + 401 tanpa secret) — memakai nomor
+#      uji 6280000000000, selalu dihapus kembali (asumsi whitelist terisi
+#      minimal 1 nomor pemilik, sehingga remove nomor uji bukan "nomor
+#      terakhir" dan tidak terkena guard)
+#   7. watchdog systemd aktif
 #
 # Cara pakai:  bash scripts/e2e_test.sh
 # Exit code 0 = semua lolos; 1 = ada yang gagal.
@@ -121,8 +125,48 @@ else
   fail "sampel struk tidak ada & secret kosong — lewati uji foto"
 fi
 
-# --- 6. watchdog systemd ---
-echo; echo "── 6. Watchdog (systemd) ──"
+# --- 6. whitelist WhatsApp (endpoint admin bridge) ---
+echo; echo "── 6. Whitelist WhatsApp ──"
+WL_ADD="6280000000000"
+if [ -n "$SECRET" ]; then
+  # 6a. lihat isi daftar awal (untuk tahu mode terbuka / terisi)
+  WL_LIST=$(curl -s -m 8 -X POST "$BRIDGE/admin/whitelist" -H "x-secret: $SECRET" -H 'Content-Type: application/json' -d '{"action":"list"}' 2>/dev/null)
+  if echo "$WL_LIST" | grep -q '"allowed":\[\]'; then
+    # mode terbuka: guard API tidak bisa mengosongkan daftar, jadi nomor uji
+    # tidak bisa dibersihkan -> lewati add/remove agar tidak mengotori
+    ok "whitelist: mode terbuka (daftar kosong) — add/remove dilewati"
+  else
+    # 6b. add nomor uji (idempoten — aman walau sisa run sebelumnya)
+    WL_R=$(curl -s -m 8 -X POST "$BRIDGE/admin/whitelist" -H "x-secret: $SECRET" -H 'Content-Type: application/json' -d "{\"action\":\"add\",\"number\":\"$WL_ADD\"}" 2>/dev/null)
+    if echo "$WL_R" | grep -q '"ok":true'; then
+      ok "whitelist: add nomor uji diterima"
+    else
+      fail "whitelist: add gagal: ${WL_R:0:60}"
+    fi
+    # 6c. list memuat nomor uji
+    WL_R=$(curl -s -m 8 -X POST "$BRIDGE/admin/whitelist" -H "x-secret: $SECRET" -H 'Content-Type: application/json' -d '{"action":"list"}' 2>/dev/null)
+    if echo "$WL_R" | grep -q "$WL_ADD"; then
+      ok "whitelist: nomor uji ada di daftar"
+    else
+      fail "whitelist: nomor uji tidak ada di list: ${WL_R:0:60}"
+    fi
+    # 6d. hapus nomor uji (daftar masih punya nomor lain -> tidak kena guard)
+    WL_R=$(curl -s -m 8 -X POST "$BRIDGE/admin/whitelist" -H "x-secret: $SECRET" -H 'Content-Type: application/json' -d "{\"action\":\"remove\",\"number\":\"$WL_ADD\"}" 2>/dev/null)
+    if echo "$WL_R" | grep -q '"ok":true'; then
+      ok "whitelist: remove nomor uji berhasil"
+    else
+      fail "whitelist: remove gagal: ${WL_R:0:60}"
+    fi
+  fi
+  # 6e. tanpa secret -> 401
+  WL_CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 8 -X POST "$BRIDGE/admin/whitelist" -H 'Content-Type: application/json' -d '{"action":"list"}' 2>/dev/null)
+  check "whitelist: tanpa secret ditolak (401)" "401" "$WL_CODE"
+else
+  fail "BRIDGE_WEBHOOK_SECRET kosong — lewati uji whitelist"
+fi
+
+# --- 7. watchdog systemd ---
+echo; echo "── 7. Watchdog (systemd) ──"
 if systemctl --user is-active sales-watchdog.service > /dev/null 2>&1; then
   ok "service sales-watchdog aktif (systemd)"
 else

@@ -207,6 +207,11 @@ perangkat Anda sendiri (chat ke diri sendiri) **selalu** diproses.
 | `/izinkan 628123456789` | Tambah nomor WhatsApp ke whitelist |
 | `/blokir 628123456789` | Hapus nomor dari whitelist |
 
+Tombol **📋 Whitelist / ➕ Izinkan / ➖ Blokir** tersedia di menu keyboard
+Telegram. Ketuk ➕ atau ➖ lalu **ketik nomornya di pesan berikutnya** — bot
+langsung memproses tanpa perlu mengetik perintah lengkap (atau ketik manual
+`/izinkan 628xxx`).
+
 Daftar tersimpan di `whatsapp-bridge/allowed-numbers.json` (persisten antar
 restart) dan disinkronkan langsung ke bridge. Nilai awal bisa diatur lewat
 `WHATSAPP_ALLOWED_NUMBERS` di `whatsapp-bridge/.env` (format nomor internasional
@@ -296,13 +301,15 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 node scripts/test_whitelist.js   # unit test whitelist WhatsApp (tanpa koneksi)
 ```
 
-45 test Python mencakup: parser struk (`app/parser.py`), perintah bot
+52 test Python mencakup: parser struk (`app/parser.py`), perintah bot
 (`app/process.py` — termasuk bentuk nomor menu & bahasa alami), analytics
 (`app/analytics.py` — termasuk struk tanpa tanggal), alur login dashboard
-(`app/web/server.py`), ekspor Excel (`app/export.py`), dan klien whitelist
-(`app/whitelist.py`). Test memakai database sementara — data asli di `data/`
-tidak pernah tersentuh. Test Node mencakup logika whitelist di bridge
-(normalisasi nomor, add/remove/list, guard nomor terakhir, `isAllowedSender`).
+(`app/web/server.py`), ekspor Excel (`app/export.py`), klien whitelist
+(`app/whitelist.py`), dan alur tombol whitelist di bot Telegram (minta nomor →
+proses; `/whitelist` tidak memicu ekspor; `/export` mengirim file). Test
+memakai database sementara — data asli di `data/` tidak pernah tersentuh.
+Test Node mencakup logika whitelist di bridge (normalisasi nomor,
+add/remove/list, guard nomor terakhir, `isAllowedSender`).
 
 ## 🗄️ Backup Otomatis
 
@@ -362,9 +369,10 @@ bash scripts/e2e_test.sh
 
 Memverifikasi seluruh rantai layanan sekaligus: health API & bridge, proteksi
 dashboard, perintah bot (webhook WhatsApp → laporan), **foto struk nyata**
-(OCR → tersimpan di DB → balasan "Struk tersimpan"), dan service watchdog
-systemd. Exit code 0 = semuanya sehat. Cocok dijalankan lewat cron/systemd
-timer untuk pemantauan berkala.
+(OCR → tersimpan di DB → balasan "Struk tersimpan"), **whitelist WhatsApp**
+(add/remove nomor uji + 401 tanpa secret), dan service watchdog systemd.
+Exit code 0 = semuanya sehat. Cocok dijalankan lewat cron/systemd timer untuk
+pemantauan berkala.
 
 ## 🧪 Catatan Teknis
 

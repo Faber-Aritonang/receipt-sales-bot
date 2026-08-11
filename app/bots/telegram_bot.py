@@ -28,6 +28,7 @@ def _menu_markup() -> ReplyKeyboardMarkup:
         [KeyboardButton("/laporanharian 📆"), KeyboardButton("/laporanmingguan 🗓️")],
         [KeyboardButton("/laporanbulanan 📅"), KeyboardButton("/produkterlaris 🏆")],
         [KeyboardButton("/total 💼"), KeyboardButton("/export 📥")],
+        [KeyboardButton("/whitelist 📋"), KeyboardButton("/izinkan ➕"), KeyboardButton("/blokir ➖")],
         [KeyboardButton("/bantuan ❓")],
     ]
     return ReplyKeyboardMarkup(
@@ -38,10 +39,16 @@ def _menu_markup() -> ReplyKeyboardMarkup:
     )
 
 
+def _clear_pending_whitelist(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bersihkan alur menunggu nomor whitelist (mis. user membatalkan)."""
+    context.user_data.pop("pending_whitelist", None)
+
+
 async def _start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _allowed(update.effective_user.id):
         await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
         return
+    _clear_pending_whitelist(context)
     await update.message.reply_text(
         "🤖 *Selamat datang di Sales Canvas Bot!*\n\n"
         "Kirim *foto struk* penjualan, nanti otomatis dicatat & dianalisa.\n"
@@ -54,6 +61,7 @@ async def _start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _allowed(update.effective_user.id):
         return
+    _clear_pending_whitelist(context)
     await update.message.reply_text(
         process.HELP_TEXT, parse_mode="Markdown", reply_markup=_menu_markup()
     )
@@ -62,6 +70,7 @@ async def _help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _allowed(update.effective_user.id):
         return
+    _clear_pending_whitelist(context)
     text = update.message.text or ""
     try:
         reply = process.command_reply(text)
@@ -78,61 +87,7 @@ async def _export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _allowed(update.effective_user.id):
         await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
         return
-
-
-def _wa_whitelist_text(result: dict) -> str:
-    """Format respons whitelist jadi teks yang rapi."""
-    if not result.get("ok"):
-        return f"⚠️ Gagal: {result.get('error', 'tidak diketahui')}"
-    allowed = result.get("allowed") or []
-    if not allowed:
-        return "🌍 Mode terbuka — SEMUA nomor WhatsApp boleh memakai bot."
-    lines = ["🔒 *Nomor WhatsApp yang diizinkan:*"]
-    lines += [f"{i}. {n}" for i, n in enumerate(allowed, 1)]
-    lines.append("")
-    lines.append("Untuk menambah: /izinkan 628xxxx / menghapus: /blokir 628xxxx")
-    return "\n".join(lines)
-
-
-async def _whitelist_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/izinkan 628xxxx — tambah nomor WhatsApp ke daftar yang boleh memakai bot.
-    """
-    if not _allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
-        return
-    if not context.args:
-        await update.message.reply_text(
-            "Contoh: /izinkan 628123456789\n"
-            "(nomor internasional tanpa +). Cek daftar: /whitelist"
-        )
-        return
-    number = context.args[0]
-    result = whitelist.wa_whitelist_add(number)
-    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
-
-
-async def _whitelist_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/blokir 628xxxx — hapus nomor dari daftar yang diizinkan.
-    """
-    if not _allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
-        return
-    if not context.args:
-        await update.message.reply_text("Contoh: /blokir 628123456789")
-        return
-    number = context.args[0]
-    result = whitelist.wa_whitelist_remove(number)
-    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
-
-
-async def _whitelist_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/whitelist — tampilkan daftar nomor WhatsApp yang diizinkan.
-    """
-    if not _allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
-        return
-    result = whitelist.wa_whitelist_list()
-    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
+    _clear_pending_whitelist(context)
 
     status = await update.message.reply_text(
         "⏳ Menyiapkan file Excel…", reply_markup=_menu_markup()
@@ -150,6 +105,84 @@ async def _whitelist_list(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as exc:
         log.exception("gagal membuat file export dari %s", update.effective_user.id)
         await status.edit_text(f"⚠️ Terjadi kesalahan saat membuat file Excel: {exc}")
+
+
+def _wa_whitelist_text(result: dict) -> str:
+    """Format respons whitelist jadi teks yang rapi."""
+    if not result.get("ok"):
+        return f"⚠️ Gagal: {result.get('error', 'tidak diketahui')}"
+    allowed = result.get("allowed") or []
+    if not allowed:
+        return "🌍 Mode terbuka — SEMUA nomor WhatsApp boleh memakai bot."
+    lines = ["🔒 *Nomor WhatsApp yang diizinkan:*"]
+    lines += [f"{i}. {n}" for i, n in enumerate(allowed, 1)]
+    lines.append("")
+    lines.append("Untuk menambah: /izinkan 628xxxx / menghapus: /blokir 628xxxx")
+    return "\n".join(lines)
+
+
+async def _whitelist_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/izinkan [628xxxx] — tambah nomor WhatsApp ke daftar yang boleh memakai bot.
+
+    Tanpa nomor -> bot meminta nomor di pesan berikutnya (alur tombol).
+    """
+    if not _allowed(update.effective_user.id):
+        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
+        return
+    if not context.args:
+        context.user_data["pending_whitelist"] = "add"
+        await update.message.reply_text(
+            "➕ Ketik nomor WhatsApp yang mau diizinkan (format internasional tanpa +, "
+            "contoh: 628123456789)."
+        )
+        return
+    number = context.args[0]
+    result = whitelist.wa_whitelist_add(number)
+    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
+
+
+async def _whitelist_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/blokir [628xxxx] — hapus nomor dari daftar yang diizinkan.
+
+    Tanpa nomor -> bot meminta nomor di pesan berikutnya (alur tombol).
+    """
+    if not _allowed(update.effective_user.id):
+        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
+        return
+    if not context.args:
+        context.user_data["pending_whitelist"] = "remove"
+        await update.message.reply_text(
+            "➖ Ketik nomor WhatsApp yang mau diblokir (format internasional tanpa +, "
+            "contoh: 628123456789)."
+        )
+        return
+    number = context.args[0]
+    result = whitelist.wa_whitelist_remove(number)
+    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
+
+
+async def _whitelist_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Teks biasa saat menunggu nomor dari alur tombol /izinkan atau /blokir."""
+    action = context.user_data.pop("pending_whitelist", None)
+    if not action:
+        return  # bukan bagian alur whitelist — abaikan seperti sebelumnya
+    number = (update.message.text or "").strip()
+    if action == "add":
+        result = whitelist.wa_whitelist_add(number)
+    else:
+        result = whitelist.wa_whitelist_remove(number)
+    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
+
+
+async def _whitelist_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/whitelist — tampilkan daftar nomor WhatsApp yang diizinkan.
+    """
+    if not _allowed(update.effective_user.id):
+        await update.message.reply_text("⛔ Anda tidak punya akses ke bot ini.")
+        return
+    _clear_pending_whitelist(context)
+    result = whitelist.wa_whitelist_list()
+    await update.message.reply_text(_wa_whitelist_text(result), parse_mode="Markdown")
 
 
 async def _photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -187,6 +220,10 @@ def build_app(token: str) -> Application:
     app.add_handler(CommandHandler(["izinkan", "tambah"], _whitelist_add))
     app.add_handler(CommandHandler(["blokir", "hapus"], _whitelist_remove))
     app.add_handler(CommandHandler(["whitelist", "daftar"], _whitelist_list))
+    # teks biasa: dipakai untuk nomor yang dikirim setelah tombol /izinkan /blokir
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, _whitelist_pending_text)
+    )
     app.add_handler(
         CommandHandler(
             [
