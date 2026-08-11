@@ -200,7 +200,7 @@ memakai bot (mengirim struk & melihat laporan). Untuk membatasi, isi
 
 ```env
 # format: nomor internasional tanpa '+', pisah koma
-WHATSAPP_ALLOWED_NUMBERS=6280000000000,628123456789
+WHATSAPP_ALLOWED_NUMBERS=6280000000000,6281111111111
 ```
 
 Nomor yang tidak terdaftar otomatis ditolak (mendapat balasan "nomor tidak
