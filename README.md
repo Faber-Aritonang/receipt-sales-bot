@@ -192,6 +192,22 @@ Ketik **`menu`** (atau `tombol` / `bantuan`) di chat WhatsApp → bot mengirim:
 Perintah juga bisa diketik langsung dengan **bahasa alami** tanpa garis miring:
 `laporan harian`, `1.laporan harian`, `Laporan Harian`, dst.
 
+### 🔒 Batasi siapa yang boleh memakai bot WhatsApp
+
+Secara default **semua nomor** yang mengirim ke nomor WhatsApp Anda bisa
+memakai bot (mengirim struk & melihat laporan). Untuk membatasi, isi
+`WHATSAPP_ALLOWED_NUMBERS` di `whatsapp-bridge/.env`:
+
+```env
+# format: nomor internasional tanpa '+', pisah koma
+WHATSAPP_ALLOWED_NUMBERS=6280000000000,628123456789
+```
+
+Nomor yang tidak terdaftar otomatis ditolak (mendapat balasan "nomor tidak
+terdaftar"). Pesan dari perangkat Anda sendiri (chat ke diri sendiri) **selalu**
+diproses tanpa perlu masuk daftar. Kosongkan untuk mengizinkan semua nomor
+lagi.
+
 > Di Telegram, tombol perintah tampil otomatis di bawah kolom ketik setelah
 > mengetik `/start` atau `/bantuan`.
 
@@ -251,6 +267,7 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 | `WATCHDOG_NOTIFY_CHAT_ID` | Chat id Telegram untuk notifikasi restart watchdog (opsional) |
 | `BACKUP_KEEP_DAYS` | Berapa hari backup DB disimpan di `data/backup/` (default 7) |
 | `QR_PASSWORD` (di `whatsapp-bridge/.env`) | Password untuk halaman QR WhatsApp (kosong = terbuka) |
+| `WHATSAPP_ALLOWED_NUMBERS` (di `whatsapp-bridge/.env`) | Whitelist nomor yang boleh memakai bot WhatsApp (kosong = semua nomor) |
 | `API_PORT` | Port dashboard (default 8000) |
 | `OCR_LANG` | Bahasa OCR (default `ind+eng`) |
 | `TESSERACT_CMD` / `TESSDATA_PREFIX` | Path tesseract (opsional, otomatis pakai vendor) |

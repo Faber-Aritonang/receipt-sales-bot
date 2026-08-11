@@ -1,0 +1,7 @@
+Tambahkan whitelist nomor WhatsApp (WHATSAPP_ALLOWED_NUMBERS)
+
+- Bridge WhatsApp kini membatasi siapa yang boleh memakai bot:
+  hanya nomor terdaftar yang bisa mengirim struk & melihat laporan
+- Nomor tidak terdaftar ditolak dengan balasan sopan; pesan dari perangkat
+  sendiri (chat ke diri sendiri) selalu diproses
+- Konfigurasi di whatsapp-bridge/.env, dokumentasi di .env.example & README

@@ -39,6 +39,31 @@ const SECRET = process.env.BRIDGE_WEBHOOK_SECRET || 'ganti-ini-dengan-string-aca
 const PORT = Number(process.env.BRIDGE_PORT || 3100);
 
 /**
+ * Whitelist nomor WhatsApp yang boleh memakai bot.
+ * Format: nomor internasional tanpa '+' dipisah koma, mis. 6280000000000,628123456789
+ * Kosong = SEMUA nomor boleh (kompatibel dengan setup lama).
+ * Pesan dari perangkat sendiri (chat ke diri sendiri, fromMe=true) selalu
+ * diproses tanpa perlu masuk whitelist.
+ */
+const ALLOWED_NUMBERS = (process.env.WHATSAPP_ALLOWED_NUMBERS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((s) => s.replace(/\D/g, ''));
+
+/** Ambil angka telpon dari JID (mis. 6280000000000@s.whatsapp.net -> 6280000000000). */
+function numberFromJid(jid) {
+  if (!jid) return '';
+  return jid.split('@')[0].replace(/\D/g, '');
+}
+
+/** Apakah nomor pengirim boleh memakai bot? (kosong = semua boleh) */
+function isAllowedSender(jid) {
+  if (!ALLOWED_NUMBERS.length) return true;
+  return ALLOWED_NUMBERS.includes(numberFromJid(jid));
+}
+
+/**
  * Proteksi halaman QR di browser.
  * QR_PASSWORD kosong  -> tanpa login (kompatibel dengan setup lama).
  * QR_PASSWORD terisi  -> /qr & /qr.png butuh password (cookie httpOnly 24 jam).
@@ -511,6 +536,25 @@ async function start() {
       const content = unwrapEphemeral(msg.message);
       if (!content) continue;
 
+      // Whitelist: pesan dari nomor LAIN (bukan perangkat sendiri) hanya
+      // diproses bila nomornya terdaftar di WHATSAPP_ALLOWED_NUMBERS.
+      if (!msg.key.fromMe && !isAllowedSender(sender)) {
+        console.log('[bridge] ⛔ ditolak (nomor tidak terdaftar):', sender);
+        try {
+          await sendText(
+            sock,
+            sender,
+            '⛔ Nomor WhatsApp Anda tidak terdaftar untuk memakai bot ini.\n' +
+              'Hubungi pemilik bot untuk mengaktifkan akses.'
+          );
+        } catch (_) {
+          /* abaikan */
+        }
+        // tandai agar tidak diproses ulang bila di-deliver ulang
+        rememberProcessedId(msgId);
+        continue;
+      }
+
       // tandai sudah diproses SEBELUM await (duplikat langsung dilewati)
       rememberProcessedId(msgId);
 
@@ -570,4 +614,14 @@ if (require.main === module) {
   start().catch((e) => console.error('[bridge] fatal:', e));
 }
 
-module.exports = { MENU, NUM_TO_CMD, menuText, unwrapEphemeral, getButtonId, sendMenu, isRecent };
+module.exports = {
+  MENU,
+  NUM_TO_CMD,
+  menuText,
+  unwrapEphemeral,
+  getButtonId,
+  sendMenu,
+  isRecent,
+  numberFromJid,
+  isAllowedSender,
+};
