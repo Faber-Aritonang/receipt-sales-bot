@@ -192,19 +192,31 @@ Ketik **`menu`** (atau `tombol` / `bantuan`) di chat WhatsApp → bot mengirim:
 Perintah juga bisa diketik langsung dengan **bahasa alami** tanpa garis miring:
 `laporan harian`, `1.laporan harian`, `Laporan Harian`, dst.
 
-### 🔒 Batasi siapa yang boleh memakai bot WhatsApp
+### 🔒 Batasi siapa yang boleh memakai bot (Telegram & WhatsApp)
 
-Secara default **semua nomor** yang mengirim ke nomor WhatsApp Anda bisa
-memakai bot (mengirim struk & melihat laporan). Nomor yang tidak terdaftar
-otomatis ditolak (mendapat balasan "nomor tidak terdaftar"), dan pesan dari
-perangkat Anda sendiri (chat ke diri sendiri) **selalu** diproses.
+**Satu daftar nomor (whitelist) mengontrol akses ke kedua bot** — nomor yang
+tidak terdaftar ditolak, baik di Telegram maupun WhatsApp.
+
+**WhatsApp** — secara default **semua nomor** yang mengirim ke nomor WhatsApp
+Anda bisa memakai bot. Nomor yang tidak terdaftar otomatis ditolak (mendapat
+balasan "nomor tidak terdaftar"), dan pesan dari perangkat Anda sendiri (chat
+ke diri sendiri) **selalu** diproses.
+
+**Telegram** — Telegram tidak memberitahu bot nomor pengguna kecuali ia
+membagikannya. Saat whitelist aktif, pengguna baru yang mengirim pesan diminta
+mengetuk tombol **📱 Bagikan Nomor** sekali; nomornya dicocokkan dengan
+whitelist dan bila cocok akses langsung dibuka. User id-nya diingat di
+`data/telegram_verified.json`, jadi tidak perlu membagikan nomor lagi setelah
+itu (nomor yang nanti dihapus dari whitelist otomatis kehilangan akses).
+`TELEGRAM_ALLOWED_IDS` tetap berlaku sebagai izin tambahan berbasis ID — user
+yang ada di daftar itu tidak perlu verifikasi nomor.
 
 **Kelola daftar nomor lewat bot Telegram** (tanpa edit file):
 
 | Perintah | Fungsi |
 |---|---|
 | `/whitelist` | Lihat daftar nomor yang diizinkan |
-| `/izinkan 628123456789` | Tambah nomor WhatsApp ke whitelist |
+| `/izinkan 628123456789` | Tambah nomor ke whitelist (Telegram & WhatsApp) |
 | `/blokir 628123456789` | Hapus nomor dari whitelist |
 
 Tombol **📋 Whitelist / ➕ Izinkan / ➖ Blokir** tersedia di menu keyboard
@@ -216,6 +228,10 @@ Daftar tersimpan di `whatsapp-bridge/allowed-numbers.json` (persisten antar
 restart) dan disinkronkan langsung ke bridge. Nilai awal bisa diatur lewat
 `WHATSAPP_ALLOWED_NUMBERS` di `whatsapp-bridge/.env` (format nomor internasional
 tanpa `+`, pisah koma). Kosongkan untuk mengizinkan semua nomor lagi.
+
+> Di platform dengan disk ephemeral (mis. Render free tier), file ini bisa
+> hilang saat redeploy — pakai env var `WHATSAPP_ALLOWED_NUMBERS` agar daftar
+> selalu ada.
 
 > 🛡️ **Pengaman:** nomor **terakhir** di daftar tidak bisa dihapus via
 > `/blokir` — karena daftar kosong berarti kembali ke mode "semua nomor boleh".
@@ -271,8 +287,40 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 5. **Buka dashboard:** `http://IP-VPS:8000/dashboard`
 
 > ⚠️ Buka port 8000 (dan 3100 jika perlu) di firewall VPS. Untuk HTTPS/domain,
-> bisa gunakan Nginx reverse-proxy + Let's Encrypt, atau platform seperti
-> Railway/Render (perlu sesuaikan — bridge butuh koneksi persisten).
+> bisa gunakan Nginx reverse-proxy + Let's Encrypt.
+
+---
+
+## 🚢 Deploy ke Render (Blueprint)
+
+Repo sudah menyertakan `render.yaml` (Render Blueprint) yang membuat **2 Web
+Service** sekaligus: `sales-bot-api` (FastAPI + dashboard + bot Telegram) dan
+`sales-bot-bridge` (bridge WhatsApp).
+
+1. Push repo ini ke GitHub.
+2. Buka **https://dashboard.render.com/blueprints** → *New Blueprint Instance* →
+   pilih repo ini. Render membaca `render.yaml` dan membuat kedua service.
+3. Isi environment variable yang bertanda *isi manual* di dashboard:
+   - **api**: `TELEGRAM_BOT_TOKEN`, `BRIDGE_WEBHOOK_SECRET`, `BRIDGE_URL`
+     (= `https://<nama-bridge>.onrender.com`), opsional `DASHBOARD_PASSWORD`.
+   - **bridge**: `PYTHON_API_URL` (= `https://<nama-api>.onrender.com`),
+     `BRIDGE_WEBHOOK_SECRET` (harus **sama** dengan api), opsional
+     `WHATSAPP_ALLOWED_NUMBERS` dan `QR_PASSWORD`.
+4. Setelah service jadi, buka log bridge → **scan QR WhatsApp**, atau buka
+   `https://<nama-bridge>.onrender.com/qr` di browser.
+
+Dashboard: `https://<nama-api>.onrender.com/dashboard`.
+
+> ⚠️ **Butuh plan berbayar (min. Starter).** Kedua service memakai
+> **Persistent Disk** (`/app/data`) untuk menyimpan DB, session WhatsApp, dan
+> whitelist. Free tier Render memakai disk **ephemeral** — data & session hilang
+> tiap deploy/restart (harus scan QR ulang) — dan menidurkan service setelah
+> 15 menit idle (WhatsApp putus).
+>
+> 🔒 **Whitelist di Render:** set `WHATSAPP_ALLOWED_NUMBERS` sebagai env var
+> di service bridge. File `allowed-numbers.json` yang dibuat perintah `/izinkan`
+> ikut tersimpan di disk selama tidak redeploy, tapi env var selalu ada dan
+> tidak bisa hilang.
 
 ---
 
@@ -281,13 +329,13 @@ grafik penjualan harian (7/30 hari), metode pembayaran (donut), produk terlaris
 | Variabel | Fungsi |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Token dari BotFather (kosong = bot Telegram nonaktif) |
-| `TELEGRAM_ALLOWED_IDS` | ID pengguna yang boleh memakai bot (kosong = semua) |
+| `TELEGRAM_ALLOWED_IDS` | ID pengguna yang boleh memakai bot tanpa verifikasi nomor (kosong = hanya whitelist nomor yang berlaku) |
 | `BRIDGE_WEBHOOK_SECRET` | Rahasia bersama bridge Node ↔ server Python |
 | `DASHBOARD_PASSWORD` | Password untuk membuka dashboard (kosong = tanpa login; API lain ikut terlindungi) |
 | `WATCHDOG_NOTIFY_CHAT_ID` | Chat id Telegram untuk notifikasi restart watchdog (opsional) |
 | `BACKUP_KEEP_DAYS` | Berapa hari backup DB disimpan di `data/backup/` (default 7) |
 | `QR_PASSWORD` (di `whatsapp-bridge/.env`) | Password untuk halaman QR WhatsApp (kosong = terbuka) |
-| `WHATSAPP_ALLOWED_NUMBERS` (di `whatsapp-bridge/.env`) | Whitelist nomor yang boleh memakai bot WhatsApp (kosong = semua nomor) |
+| `WHATSAPP_ALLOWED_NUMBERS` (di `whatsapp-bridge/.env`) | Whitelist nomor yang boleh memakai bot Telegram & WhatsApp (kosong = semua nomor) |
 | `API_PORT` | Port dashboard (default 8000) |
 | `OCR_LANG` | Bahasa OCR (default `ind+eng`) |
 | `TESSERACT_CMD` / `TESSDATA_PREFIX` | Path tesseract (opsional, otomatis pakai vendor) |

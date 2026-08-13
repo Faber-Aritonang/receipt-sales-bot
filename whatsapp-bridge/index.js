@@ -51,10 +51,18 @@ const PORT = Number(process.env.BRIDGE_PORT || 3100);
  * Pesan dari perangkat sendiri (chat ke diri sendiri, fromMe=true) selalu
  * diproses tanpa perlu masuk whitelist.
  */
+/**
+ * Direktori data runtime (session auth/, whitelist, id pesan, QR). Default =
+ * folder index.js; bisa di-override via env BRIDGE_DATA_DIR agar data bisa
+ * disimpan di persistent disk (mis. deploy di Render, set BRIDGE_DATA_DIR ke
+ * mount path disk).
+ */
+const DATA_DIR = process.env.BRIDGE_DATA_DIR || __dirname;
+
 // Path file whitelist bisa di-override lewat env (dipakai test agar tidak
 // menyentuh file asli).
 const ALLOW_LIST_FILE =
-  process.env.WHATSAPP_ALLOW_LIST_FILE || path.join(__dirname, 'allowed-numbers.json');
+  process.env.WHATSAPP_ALLOW_LIST_FILE || path.join(DATA_DIR, 'allowed-numbers.json');
 
 function normalizeNumber(raw) {
   return String(raw || '').replace(/\D/g, '');
@@ -149,21 +157,21 @@ const QR_COOKIE = 'qr_ok';
 const QR_COOKIE_MAXAGE = 24 * 3600 * 1000; // 24 jam
 
 /** Lokasi file QR PNG (ditimpa tiap QR baru, dihapus saat sudah terhubung). */
-const QR_PNG = path.join(__dirname, 'qr.png');
+const QR_PNG = path.join(DATA_DIR, 'qr.png');
 
 /**
- * Lokasi session WhatsApp. Absolut terhadap folder index.js, bukan working
+ * Lokasi session WhatsApp. Absolut terhadap DATA_DIR, bukan working
  * directory — agar `node index.js` dari direktori mana pun tetap memakai
  * session yang sama (cara ini juga dipakai untuk dotenv).
  */
-const AUTH_DIR = path.join(__dirname, 'auth');
+const AUTH_DIR = path.join(DATA_DIR, 'auth');
 
 /**
  * File persist id pesan yang sudah ditangani. Dipakai agar pesan lama yang
  * di-deliver ulang WhatsApp setelah restart/reconnect TIDAK diproses lagi
  * (penyebab bot "merespons sendiri").
  */
-const SEEN_FILE = path.join(__dirname, '.seen-ids.json');
+const SEEN_FILE = path.join(DATA_DIR, '.seen-ids.json');
 
 /** Parse string cookie sederhana (tanpa dependensi tambahan). */
 function parseCookies(header) {

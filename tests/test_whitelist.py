@@ -4,7 +4,24 @@ import json
 import types
 import urllib.request
 
+import pytest
+
 import app.whitelist as whitelist
+
+
+@pytest.fixture(autouse=True)
+def _tg_access_open(tmp_env, monkeypatch):
+    """Default test: mode lama (whitelist kosong = semua orang boleh).
+
+    Test alur whitelist/ekspor memakai status terbuka agar cek akses tidak
+    memblokir; test khusus akses nomor meng-override _whitelist_numbers()
+    (atau memakai monkeypatch.undo() untuk menguji fungsi aslinya).
+    """
+    from app.bots import telegram_bot as tb
+
+    tb._verified = {}
+    tb._whitelist_cache = None
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: set())
 
 
 class _FakeResp:
@@ -227,3 +244,211 @@ def test_export_memanggil_build_xlsx(tmp_env, monkeypatch):
     assert doc is not None
     assert doc.read() == b"FAKE-XLSX"  # BytesIO berisi hasil build_xlsx
     assert sent["doc"]["filename"] == "penjualan.xlsx"
+
+
+# ---------------------------------------------------------------------------
+# Akses Telegram via nomor whitelist (daftar yang sama dengan bot WhatsApp)
+# ---------------------------------------------------------------------------
+
+
+def _contact_update(phone_number, user_id=7):
+    """Update mini dengan pesan contact (bukan teks)."""
+    replies = []
+
+    async def reply_text(*a, **k):
+        replies.append((a, k))
+
+    contact = types.SimpleNamespace(phone_number=phone_number)
+    update = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=user_id),
+        effective_chat=types.SimpleNamespace(id=1),
+        message=types.SimpleNamespace(contact=contact, reply_text=reply_text),
+    )
+    return update, replies
+
+
+def test_normalize_phone():
+    """Nomor dari Telegram dinormalisasi ke format internasional (628...)."""
+    from app.bots import telegram_bot as tb
+
+    assert tb._normalize_phone("+62 812-3456-789") == "628123456789"
+    assert tb._normalize_phone("08123456789") == "628123456789"
+    assert tb._normalize_phone("628123456789") == "628123456789"
+    assert tb._normalize_phone("") == ""
+    assert tb._normalize_phone(None) == ""
+
+
+def test_allowed_id_telegram_tetap_lolos(tmp_env, monkeypatch):
+    """TELEGRAM_ALLOWED_IDS tetap jadi izin utama walau whitelist aktif."""
+    from app import config
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(config, "TELEGRAM_ALLOWED_IDS", {42})
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"628123456789"})
+    assert tb._allowed(42) is True
+    assert tb._allowed(43) is False
+
+
+def test_allowed_nomor_terverifikasi_di_whitelist(tmp_env, monkeypatch):
+    """Nomor terverifikasi yang masih ada di whitelist -> diizinkan."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"628123456789"})
+    tb._verified = {"7": "628123456789"}
+    assert tb._allowed(7) is True
+    assert tb._allowed(8) is False
+
+
+def test_allowed_nomor_dihapus_dari_whitelist_hilang_akses(tmp_env, monkeypatch):
+    """Nomor yang diblokir otomatis kehilangan akses (tanpa verifikasi ulang)."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"6280000000000"})
+    tb._verified = {"7": "628123456789"}
+    assert tb._allowed(7) is False
+
+
+def test_allowed_whitelist_kosong_mode_terbuka(tmp_env, monkeypatch):
+    """Whitelist kosong + TELEGRAM_ALLOWED_IDS kosong -> semua orang boleh."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: set())
+    assert tb._allowed(7) is True
+
+
+def test_allowed_whitelist_kosong_tapi_id_dibatasi(tmp_env, monkeypatch):
+    """Whitelist kosong tapi TELEGRAM_ALLOWED_IDS terisi -> hanya ID itu."""
+    from app import config
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(config, "TELEGRAM_ALLOWED_IDS", {42})
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: set())
+    assert tb._allowed(42) is True
+    assert tb._allowed(7) is False
+
+
+def test_allowed_fail_closed_saat_whitelist_tidak_diketahui(tmp_env, monkeypatch):
+    """Status whitelist tidak diketahui -> akses TERTUTUP (bukan terbuka)."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: None)
+    tb._verified = {}
+    assert tb._allowed(7) is False
+
+
+def test_whitelist_numbers_none_saat_bridge_gagal(tmp_env, monkeypatch):
+    """Fetch whitelist gagal & belum ada cache -> None (fail closed)."""
+    monkeypatch.undo()  # pulihkan _whitelist_numbers asli (hapus patch fixture)
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(
+        whitelist, "wa_whitelist_list", lambda: {"ok": False, "error": "bridge mati"}
+    )
+    tb._whitelist_cache = None
+    assert tb._whitelist_numbers() is None
+
+
+def test_whitelist_numbers_cache_setelah_fetch_berhasil(tmp_env, monkeypatch):
+    """Fetch berhasil -> daftar nomor dipakai sebagai cache."""
+    monkeypatch.undo()
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(
+        whitelist, "wa_whitelist_list", lambda: {"ok": True, "allowed": ["6281111111111"]}
+    )
+    tb._whitelist_cache = None
+    assert tb._whitelist_numbers() == {"6281111111111"}
+
+
+def test_deny_minta_bagikan_nomor_saat_whitelist_aktif(tmp_env, monkeypatch):
+    """User tanpa akses diminta membagikan nomor (tombol request_contact)."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"628123456789"})
+    replies = []
+
+    async def reply_text(*a, **k):
+        replies.append((a, k))
+
+    update = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=7),
+        message=types.SimpleNamespace(reply_text=reply_text),
+    )
+    _run(tb._deny_or_request_contact(update))
+    assert replies and "whitelist" in replies[0][0][0]
+    btn = replies[0][1]["reply_markup"].keyboard[0][0]
+    assert btn.request_contact is True
+
+
+def test_deny_tanpa_whitelist_tolak_biasa(tmp_env, monkeypatch):
+    """Tanpa whitelist aktif (hanya ID dibatasi) -> tolak tanpa minta nomor."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: set())
+    replies = []
+
+    async def reply_text(*a, **k):
+        replies.append((a, k))
+
+    update = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=7),
+        message=types.SimpleNamespace(reply_text=reply_text),
+    )
+    _run(tb._deny_or_request_contact(update))
+    assert replies and "tidak punya akses" in replies[0][0][0]
+
+
+def test_contact_nomor_terdaftar_diberi_akses(tmp_env, monkeypatch, tmp_path):
+    """Nomor yang dibagikan & cocok dengan whitelist -> akses dibuka + disimpan."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"628123456789"})
+    tb._verified = {}
+
+    update, replies = _contact_update("+62 812-3456-789")
+    context = types.SimpleNamespace(user_data={})
+    _run(tb._contact(update, context))
+    assert tb._verified.get("7") == "628123456789"
+    assert replies and "terdaftar" in replies[0][0][0]
+    # daftar user terverifikasi tersimpan persisten di data/
+    assert (tmp_path / "telegram_verified.json").exists()
+
+
+def test_contact_nomor_tidak_terdaftar_ditolak(tmp_env, monkeypatch):
+    """Nomor yang dibagikan tidak ada di whitelist -> ditolak."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: {"628123456789"})
+    tb._verified = {}
+
+    update, replies = _contact_update("+6280000000000")
+    context = types.SimpleNamespace(user_data={})
+    _run(tb._contact(update, context))
+    assert "7" not in tb._verified
+    assert replies and "whitelist" in replies[0][0][0]
+
+
+def test_contact_mode_terbuka_tanpa_verifikasi(tmp_env, monkeypatch):
+    """Whitelist kosong -> membagikan nomor tidak mengunci siapa pun."""
+    from app.bots import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_whitelist_numbers", lambda: set())
+    tb._verified = {}
+
+    update, replies = _contact_update("+6280000000000")
+    context = types.SimpleNamespace(user_data={})
+    _run(tb._contact(update, context))
+    assert "7" not in tb._verified  # tidak perlu diverifikasi
+    assert replies and "terbuka" in replies[0][0][0]
+
+
+def test_save_verified_persisten_setelah_load(tmp_env, monkeypatch, tmp_path):
+    """User terverifikasi tetap diingat setelah proses baru membaca file."""
+    from app.bots import telegram_bot as tb
+
+    tb._verified = {}
+    tb._save_verified(7, "628123456789")
+    # simulasi restart: baca ulang dari disk
+    tb._verified = {}
+    tb._load_verified()
+    assert tb._verified.get("7") == "628123456789"

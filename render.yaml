@@ -1,0 +1,92 @@
+# ============================================================================
+# Render Blueprint — deploy Sales Canvas Bot ke Render.
+#
+# Dua Web Service (Docker):
+#   sales-bot-api      : FastAPI + dashboard + bot Telegram  (port 8000)
+#   sales-bot-bridge   : bridge WhatsApp (Baileys)           (port 3100)
+#
+# CARA DEPLOY (sekali):
+#   1. Pastikan repo ini sudah ter-push ke GitHub.
+#   2. Buka https://dashboard.render.com/blueprints -> "New Blueprint Instance"
+#      -> pilih repo ini. Render membaca render.yaml ini dan membuat kedua service.
+#   3. Isi environment variable bertanda "sync: false" (isi manual) di dashboard
+#      Render untuk masing-masing service:
+#        api     : TELEGRAM_BOT_TOKEN, BRIDGE_WEBHOOK_SECRET, BRIDGE_URL,
+#                  (opsional) DASHBOARD_PASSWORD
+#        bridge  : PYTHON_API_URL, BRIDGE_WEBHOOK_SECRET,
+#                  (opsional) WHATSAPP_ALLOWED_NUMBERS, QR_PASSWORD
+#      BRIDGE_WEBHOOK_SECRET harus SAMA di kedua service.
+#   4. Setelah service dibuat, buka log bridge dan scan QR WhatsApp, atau buka
+#      https://<nama-bridge>.onrender.com/qr di browser.
+#
+# CATATAN PENTING:
+#   - Kedua service memakai plan "starter" (berbayar) karena butuh Persistent
+#     Disk. Free tier Render memakai disk ephemeral (DB, session WhatsApp, dan
+#     whitelist HILANG tiap deploy/restart) dan menidurkan service setelah
+#     15 menit idle — WhatsApp putus dan harus scan QR ulang.
+#   - BRIDGE_URL (di api) & PYTHON_API_URL (di bridge) diisi manual dengan URL
+#     public masing-masing service, mis. https://sales-bot-bridge.onrender.com
+#     dan https://sales-bot-api.onrender.com (bukan 127.0.0.1).
+#   - Whitelist nomor: set WHATSAPP_ALLOWED_NUMBERS di bridge (env var selalu
+#     ada, tidak seperti file allowed-numbers.json di disk yang bisa hilang).
+# ============================================================================
+
+services:
+  # ---------- API + dashboard + bot Telegram ----------
+  - type: web
+    name: sales-bot-api
+    runtime: docker
+    repo: https://github.com/Faber-Aritonang/receipt-sales-bot
+    branch: main
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    port: 8000
+    healthCheckPath: /api/health
+    envVars:
+      # Token bot Telegram dari @BotFather — isi manual di dashboard
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Rahasia bersama bridge <-> api — isi manual & harus SAMA dengan bridge
+      - key: BRIDGE_WEBHOOK_SECRET
+        sync: false
+      # URL bridge WhatsApp — isi manual: https://<nama-bridge>.onrender.com
+      - key: BRIDGE_URL
+        sync: false
+      # (Opsional) Password dashboard — kosongkan = tanpa login
+      - key: DASHBOARD_PASSWORD
+        sync: false
+    disk:
+      name: api-data
+      mountPath: /app/data
+      sizeGB: 1
+
+  # ---------- Bridge WhatsApp (Baileys) ----------
+  - type: web
+    name: sales-bot-bridge
+    runtime: docker
+    repo: https://github.com/Faber-Aritonang/receipt-sales-bot
+    branch: main
+    plan: starter
+    dockerfilePath: ./whatsapp-bridge/Dockerfile
+    port: 3100
+    healthCheckPath: /health
+    envVars:
+      # URL server API — isi manual: https://<nama-api>.onrender.com
+      - key: PYTHON_API_URL
+        sync: false
+      # Rahasia bersama — isi manual & harus SAMA dengan api
+      - key: BRIDGE_WEBHOOK_SECRET
+        sync: false
+      # (Opsional) Whitelist nomor yang boleh memakai bot (format 628xxx, pisah koma)
+      - key: WHATSAPP_ALLOWED_NUMBERS
+        sync: false
+      # (Opsional) Password halaman QR — kosongkan = terbuka
+      - key: QR_PASSWORD
+        sync: false
+      # Data runtime (session WhatsApp, whitelist, id pesan) disimpan di disk
+      - key: BRIDGE_DATA_DIR
+        value: /app/data
+    disk:
+      name: bridge-data
+      mountPath: /app/data
+      sizeGB: 1
