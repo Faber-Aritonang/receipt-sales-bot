@@ -69,6 +69,7 @@ services:
     branch: main
     plan: free
     dockerfilePath: ./whatsapp-bridge/Dockerfile
+    dockerContext: whatsapp-bridge
     port: 3100
     healthCheckPath: /health
     envVars:
