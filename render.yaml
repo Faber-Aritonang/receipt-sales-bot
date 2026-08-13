@@ -1,7 +1,7 @@
 # ============================================================================
-# Render Blueprint — deploy Sales Canvas Bot ke Render.
+# Render Blueprint — deploy Sales Canvas Bot ke Render (FREE TIER).
 #
-# Dua Web Service (Docker):
+# Dua Web Service (Docker, plan free):
 #   sales-bot-api      : FastAPI + dashboard + bot Telegram  (port 8000)
 #   sales-bot-bridge   : bridge WhatsApp (Baileys)           (port 3100)
 #
@@ -19,16 +19,15 @@
 #   4. Setelah service dibuat, buka log bridge dan scan QR WhatsApp, atau buka
 #      https://<nama-bridge>.onrender.com/qr di browser.
 #
-# CATATAN PENTING:
-#   - Kedua service memakai plan "starter" (berbayar) karena butuh Persistent
-#     Disk. Free tier Render memakai disk ephemeral (DB, session WhatsApp, dan
-#     whitelist HILANG tiap deploy/restart) dan menidurkan service setelah
-#     15 menit idle — WhatsApp putus dan harus scan QR ulang.
-#   - BRIDGE_URL (di api) & PYTHON_API_URL (di bridge) diisi manual dengan URL
-#     public masing-masing service, mis. https://sales-bot-bridge.onrender.com
-#     dan https://sales-bot-api.onrender.com (bukan 127.0.0.1).
-#   - Whitelist nomor: set WHATSAPP_ALLOWED_NUMBERS di bridge (env var selalu
-#     ada, tidak seperti file allowed-numbers.json di disk yang bisa hilang).
+# BATASAN FREE TIER (penting!):
+#   - TANPA Persistent Disk -> SEMUA data runtime (DB SQLite, session WhatsApp,
+#     whitelist, id pesan) HILANG setiap restart/redeploy. WhatsApp harus
+#     discan QR ulang setelah restart, dan data struk yang sudah tercatat
+#     hilang. Cocok untuk UJI COBA, bukan produksi.
+#   - Service "tidur" setelah ~15 menit tanpa lalu lintas masuk -> koneksi
+#     WhatsApp putus saat tidur dan bot tidak menerima pesan sampai service
+#     dibangunkan (buka URL-nya). Untuk produksi: pakai plan berbayar + disk
+#     (lihat blok disk yang dikomentari di bawah) atau VPS 24 jam.
 # ============================================================================
 
 services:
@@ -38,7 +37,7 @@ services:
     runtime: docker
     repo: https://github.com/Faber-Aritonang/receipt-sales-bot
     branch: main
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     port: 8000
     healthCheckPath: /api/health
@@ -55,10 +54,12 @@ services:
       # (Opsional) Password dashboard — kosongkan = tanpa login
       - key: DASHBOARD_PASSWORD
         sync: false
-    disk:
-      name: api-data
-      mountPath: /app/data
-      sizeGB: 1
+    # ⚠️ Free tier TIDAK mendukung disk. Untuk produksi, hapus komentar di
+    # bawah ini dan ganti plan menjadi "starter" (berbayar) agar DB tersimpan:
+    # disk:
+    #   name: api-data
+    #   mountPath: /app/data
+    #   sizeGB: 1
 
   # ---------- Bridge WhatsApp (Baileys) ----------
   - type: web
@@ -66,7 +67,7 @@ services:
     runtime: docker
     repo: https://github.com/Faber-Aritonang/receipt-sales-bot
     branch: main
-    plan: starter
+    plan: free
     dockerfilePath: ./whatsapp-bridge/Dockerfile
     port: 3100
     healthCheckPath: /health
@@ -83,10 +84,12 @@ services:
       # (Opsional) Password halaman QR — kosongkan = terbuka
       - key: QR_PASSWORD
         sync: false
-      # Data runtime (session WhatsApp, whitelist, id pesan) disimpan di disk
-      - key: BRIDGE_DATA_DIR
-        value: /app/data
-    disk:
-      name: bridge-data
-      mountPath: /app/data
-      sizeGB: 1
+    # ⚠️ Free tier TIDAK mendukung disk. Untuk produksi, hapus komentar di
+    # bawah ini, ganti plan menjadi "starter", dan aktifkan BRIDGE_DATA_DIR
+    # agar session WhatsApp & whitelist tersimpan:
+    # - key: BRIDGE_DATA_DIR
+    #   value: /app/data
+    # disk:
+    #   name: bridge-data
+    #   mountPath: /app/data
+    #   sizeGB: 1

@@ -311,16 +311,17 @@ Service** sekaligus: `sales-bot-api` (FastAPI + dashboard + bot Telegram) dan
 
 Dashboard: `https://<nama-api>.onrender.com/dashboard`.
 
-> ⚠️ **Butuh plan berbayar (min. Starter).** Kedua service memakai
-> **Persistent Disk** (`/app/data`) untuk menyimpan DB, session WhatsApp, dan
-> whitelist. Free tier Render memakai disk **ephemeral** — data & session hilang
-> tiap deploy/restart (harus scan QR ulang) — dan menidurkan service setelah
-> 15 menit idle (WhatsApp putus).
+> ⚠️ **Free tier — hanya untuk uji coba.** `render.yaml` memakai `plan: free`
+> (tanpa Persistent Disk), sehingga **semua data hilang setiap restart/redeploy**:
+> DB SQLite (struk tercatat), session WhatsApp (harus scan QR ulang), dan file
+> whitelist. Service juga **tidur setelah ~15 menit** tanpa lalu lintas masuk —
+> saat tidur, WhatsApp putus dan bot tidak menerima pesan sampai URL-nya
+> dibuka. Untuk produksi, ubah `plan` ke `starter` dan aktifkan blok `disk`
+> yang sudah dikomentari di `render.yaml` (atau pakai VPS 24 jam).
 >
 > 🔒 **Whitelist di Render:** set `WHATSAPP_ALLOWED_NUMBERS` sebagai env var
-> di service bridge. File `allowed-numbers.json` yang dibuat perintah `/izinkan`
-> ikut tersimpan di disk selama tidak redeploy, tapi env var selalu ada dan
-> tidak bisa hilang.
+> di service bridge — env var selalu ada walau file `allowed-numbers.json`
+> hilang saat redeploy.
 
 ---
 
