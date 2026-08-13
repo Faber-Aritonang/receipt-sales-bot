@@ -328,6 +328,9 @@ async function sendMenu(sock, jid) {
   }
 }
 
+// API free tier butuh waktu saat bangun dari tidur (cold start bisa 1-2 menit)
+const API_TIMEOUT_MS = 120000;
+
 /**
  * Kirim request ke API Python dengan toleransi cold-start.
  *
@@ -345,7 +348,7 @@ async function fetchApi(buildForm, maxAttempts = 3) {
       const res = await fetch(`${PY_API}/api/whatsapp/inbound`, {
         method: 'POST',
         body: buildForm(),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
       const text = await res.text();
       if (text.trim()) {
@@ -392,6 +395,13 @@ async function handleImage(sock, msg, content, sender) {
     (content.documentMessage && content.documentMessage.caption) ||
     '';
   console.log('[bridge] 📷 foto diterima dari', sender, `(${buffer.length} bytes)`);
+  // umpan balik langsung agar pengguna tahu foto sedang diproses (cold start
+  // API bisa membuat balasan tertunda beberapa detik/menit)
+  try {
+    await sendText(sock, sender, '⏳ Foto struk diterima — sedang diproses…');
+  } catch (_) {
+    /* abaikan bila gagal kirim */
+  }
   const data = await fetchApi(() => {
     const form = new FormData();
     form.append('sender', sender);
