@@ -328,15 +328,57 @@ async function sendMenu(sock, jid) {
   }
 }
 
+/**
+ * Kirim request ke API Python dengan toleransi cold-start.
+ *
+ * Free tier Render menidurkan API setelah idle; saat dibangunkan respons
+ * bisa kosong/koneksi putus sesaat. Daripada langsung error, permintaan
+ * dicoba ulang dengan jeda (15s, 30s) — cukup untuk menunggu API bangun.
+ * `buildForm` dipanggil ulang tiap percobaan agar FormData selalu segar.
+ * Mengembalikan objek JSON balasan, atau null bila gagal semua percobaan.
+ */
+async function fetchApi(buildForm, maxAttempts = 3) {
+  const waits = [0, 15000, 30000];
+  for (let i = 0; i < maxAttempts; i++) {
+    if (waits[i]) await new Promise((r) => setTimeout(r, waits[i]));
+    try {
+      const res = await fetch(`${PY_API}/api/whatsapp/inbound`, {
+        method: 'POST',
+        body: buildForm(),
+        signal: AbortSignal.timeout(60000),
+      });
+      const text = await res.text();
+      if (text.trim()) {
+        try {
+          return JSON.parse(text);
+        } catch (_) {
+          console.error(
+            `[bridge] respons API bukan JSON (status ${res.status}, percobaan ${i + 1}/${maxAttempts}):`,
+            text.slice(0, 200)
+          );
+        }
+      } else {
+        console.error(
+          `[bridge] respons API kosong (status ${res.status}) — percobaan ${i + 1}/${maxAttempts}`
+        );
+      }
+    } catch (e) {
+      console.error(`[bridge] koneksi API gagal — percobaan ${i + 1}/${maxAttempts}:`, e.message);
+    }
+  }
+  return null;
+}
+
 /** Teruskan teks perintah ke Python, lalu kirim balasannya ke pengguna. */
 async function forwardText(sock, jid, text) {
-  const form = new FormData();
-  form.append('sender', jid);
-  form.append('type', 'text');
-  form.append('text', text);
-  form.append('secret', SECRET);
-  const res = await fetch(`${PY_API}/api/whatsapp/inbound`, { method: 'POST', body: form });
-  const data = await res.json();
+  const data = await fetchApi(() => {
+    const form = new FormData();
+    form.append('sender', jid);
+    form.append('type', 'text');
+    form.append('text', text);
+    form.append('secret', SECRET);
+    return form;
+  });
   if (data && data.reply) await sendText(sock, jid, data.reply);
 }
 
@@ -349,15 +391,16 @@ async function handleImage(sock, msg, content, sender) {
     (content.imageMessage && content.imageMessage.caption) ||
     (content.documentMessage && content.documentMessage.caption) ||
     '';
-  const form = new FormData();
-  form.append('sender', sender);
-  form.append('type', 'image');
-  form.append('caption', caption);
-  form.append('secret', SECRET);
-  form.append('image', new Blob([buffer], { type: 'image/jpeg' }), 'struk.jpg');
   console.log('[bridge] 📷 foto diterima dari', sender, `(${buffer.length} bytes)`);
-  const res = await fetch(`${PY_API}/api/whatsapp/inbound`, { method: 'POST', body: form });
-  const data = await res.json();
+  const data = await fetchApi(() => {
+    const form = new FormData();
+    form.append('sender', sender);
+    form.append('type', 'image');
+    form.append('caption', caption);
+    form.append('secret', SECRET);
+    form.append('image', new Blob([buffer], { type: 'image/jpeg' }), 'struk.jpg');
+    return form;
+  });
   if (data && data.reply) await sendText(sock, sender, data.reply);
 }
 
