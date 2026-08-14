@@ -45,6 +45,10 @@ API_PORT = int(os.environ.get("API_PORT", "8000"))
 # WhatsApp yang sudah pakai BRIDGE_WEBHOOK_SECRET) wajib login dulu.
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
+# Username untuk login dashboard. Dipakai bersama DASHBOARD_PASSWORD;
+# default "kozoadmin" bila tidak di-set. Proteksi hanya aktif bila password diisi.
+DASHBOARD_USERNAME = os.environ.get("DASHBOARD_USERNAME", "kozoadmin")
+
 # ---- OCR (Tesseract) ----
 import shutil
 
@@ -52,6 +56,13 @@ import shutil
 TESSERACT_CMD = os.environ.get("TESSERACT_CMD", "").strip()
 TESSDATA_PREFIX = os.environ.get("TESSDATA_PREFIX", "").strip()
 OCR_LANG = os.environ.get("OCR_LANG", "ind+eng")
+
+# Batas waktu satu panggilan OCR (detik) & jumlah OCR yang boleh berjalan
+# bersamaan. Tesseract memakai banyak CPU; tanpa batas, banyak foto yang
+# masuk bersamaan (WhatsApp + Telegram) bisa menumpuk puluhan proses dan
+# membuat seluruh server hang.
+OCR_TIMEOUT = int(os.environ.get("OCR_TIMEOUT", "90"))
+OCR_MAX_CONCURRENCY = int(os.environ.get("OCR_MAX_CONCURRENCY", "1"))
 
 # "tesseract" di .env = pakai tesseract sistem; jika tidak ada di PATH, fallback ke vendor
 if TESSERACT_CMD == "tesseract" and not shutil.which("tesseract"):

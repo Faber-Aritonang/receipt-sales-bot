@@ -20,6 +20,10 @@ server.log
 # Node / WhatsApp bridge
 whatsapp-bridge/node_modules/
 whatsapp-bridge/auth/
+# backup session lama saat QR di-scan ulang (runtime)
+whatsapp-bridge/auth-invalid-*/
+# pemetaan LID -> nomor telepon (runtime)
+whatsapp-bridge/lid-map.json
 
 # Vendor tesseract (salinan lokal, bisa diunduh ulang)
 vendor/

@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import threading
 from functools import lru_cache
 
 import cv2
@@ -19,6 +20,12 @@ from . import config
 
 if config.TESSERACT_CMD:
     pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+
+# Batasi berapa banyak OCR yang boleh berjalan bersamaan. Tesseract memakai
+# banyak CPU; tanpa batas ini, banyak foto yang masuk serentak (WhatsApp +
+# Telegram) memunculkan puluhan proses tesseract sekaligus, CPU jenuh, dan
+# semua OCR menggantung tanpa hasil. Foto lain cukup mengantre sebentar.
+_OCR_SEMAPHORE = threading.Semaphore(max(1, config.OCR_MAX_CONCURRENCY))
 
 _TESS_EXTRA = f"--tessdata-dir {config.TESSDATA_PREFIX}" if config.TESSDATA_PREFIX else ""
 
@@ -77,33 +84,42 @@ def ocr_image(image_bytes: bytes) -> tuple[str, str]:
 
     processed = preprocess(img)
 
-    candidates: list[tuple[int, str, str]] = []
-    for psm in (6, 3, 11):
+    # Jangan biarkan banyak foto memunculkan puluhan tesseract sekaligus:
+    # antre dulu sampai slot kosong (lihat _OCR_SEMAPHORE di atas).
+    with _OCR_SEMAPHORE:
+        candidates: list[tuple[int, str, str]] = []
+        for psm in (6, 3, 11):
+            try:
+                txt = pytesseract.image_to_string(
+                    processed,
+                    lang=config.OCR_LANG,
+                    config=f"--psm {psm} {_TESS_EXTRA}".strip(),
+                    timeout=config.OCR_TIMEOUT,
+                )
+                candidates.append((_score(txt), txt, f"psm{psm}"))
+            except Exception:  # pragma: no cover - tesseract runtime issue
+                continue
+
+        if not candidates:
+            return "", "gagal-ocr"
+
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        best_score, best_text, best_cfg = candidates[0]
+
+        # Fallback: OCR langsung dari gambar asli (tanpa preprocessing)
         try:
-            txt = pytesseract.image_to_string(
-                processed, lang=config.OCR_LANG, config=f"--psm {psm} {_TESS_EXTRA}".strip()
+            raw = pytesseract.image_to_string(
+                img,
+                lang=config.OCR_LANG,
+                config=f"--psm 6 {_TESS_EXTRA}".strip(),
+                timeout=config.OCR_TIMEOUT,
             )
-            candidates.append((_score(txt), txt, f"psm{psm}"))
-        except Exception:  # pragma: no cover - tesseract runtime issue
-            continue
+            if _score(raw) > best_score:
+                return raw, "raw-psm6"
+        except Exception:
+            pass
 
-    if not candidates:
-        return "", "gagal-ocr"
-
-    candidates.sort(key=lambda c: c[0], reverse=True)
-    best_score, best_text, best_cfg = candidates[0]
-
-    # Fallback: OCR langsung dari gambar asli (tanpa preprocessing)
-    try:
-        raw = pytesseract.image_to_string(
-            img, lang=config.OCR_LANG, config=f"--psm 6 {_TESS_EXTRA}".strip()
-        )
-        if _score(raw) > best_score:
-            return raw, "raw-psm6"
-    except Exception:
-        pass
-
-    return best_text, best_cfg
+        return best_text, best_cfg
 
 
 @lru_cache(maxsize=1)

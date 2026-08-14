@@ -86,12 +86,13 @@ _LOGIN_HTML = """<!DOCTYPE html>
   h1 { font-size: 19px; text-align: center; margin-bottom: 4px; }
   p.sub { color: #93a0c4; font-size: 13px; text-align: center; margin-bottom: 24px; }
   label { display: block; font-size: 12px; color: #93a0c4; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-  input[type=password] {
+  input[type=text], input[type=password] {
     width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #263055;
     background: #0b1020; color: #e8ecf8; font-size: 14px; outline: none;
     transition: border-color .15s;
   }
-  input[type=password]:focus { border-color: #6c8cff; }
+  input[type=text]:focus, input[type=password]:focus { border-color: #6c8cff; }
+  input + input, input + button { margin-top: 12px; }
   button {
     width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius: 10px;
     background: linear-gradient(135deg, #6c8cff, #22d3a5); color: #0b1020;
@@ -108,9 +109,11 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <form class="card" method="post" action="/login">
     <div class="logo">🧾</div>
     <h1>Sales Canvas</h1>
-    <p class="sub">Masukkan password untuk membuka dashboard analisa penjualan</p>
+    <p class="sub">Masukkan username &amp; password untuk membuka dashboard analisa penjualan</p>
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" placeholder="admin" autocomplete="username" autofocus required />
     <label for="password">Password</label>
-    <input type="password" id="password" name="password" placeholder="••••••••" autofocus required />
+    <input type="password" id="password" name="password" placeholder="••••••••" autocomplete="current-password" required />
     {error_html}
     <button type="submit">🔓 Masuk</button>
   </form>
@@ -120,7 +123,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
 
 def _login_page(error: bool = False) -> HTMLResponse:
-    err = '<div class="err">⛔ Password salah. Coba lagi.</div>' if error else ""
+    err = '<div class="err">⛔ Username atau password salah. Coba lagi.</div>' if error else ""
     return HTMLResponse(_LOGIN_HTML.replace("{error_html}", err))
 
 
@@ -151,10 +154,14 @@ def create_app() -> FastAPI:
         return _login_page()
 
     @app.post("/login", include_in_schema=False)
-    async def login_submit(password: str = Form(...)):
+    async def login_submit(username: str = Form(""), password: str = Form(...)):
         if not _protected():
             return RedirectResponse("/dashboard", status_code=302)
-        if not secrets.compare_digest(password, config.DASHBOARD_PASSWORD):
+        user_ok = secrets.compare_digest(
+            username.strip(), config.DASHBOARD_USERNAME
+        )
+        pass_ok = secrets.compare_digest(password, config.DASHBOARD_PASSWORD)
+        if not (user_ok and pass_ok):
             # jeda kecil untuk memperlambat brute-force
             time.sleep(0.5)
             return _login_page(error=True)

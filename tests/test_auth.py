@@ -5,8 +5,9 @@ from fastapi.testclient import TestClient
 from app.web.server import create_app
 
 
-def _make_client(password: str) -> TestClient:
+def _make_client(password: str, username: str = "kozoadmin") -> TestClient:
     config.DASHBOARD_PASSWORD = password
+    config.DASHBOARD_USERNAME = username
     return TestClient(create_app())
 
 
@@ -34,18 +35,29 @@ def test_halaman_login_tampil(tmp_env):
     r = c.get("/login")
     assert r.status_code == 200
     assert 'type="password"' in r.text
+    assert 'type="text"' in r.text  # field username ada
 
 
 def test_login_password_salah(tmp_env):
     c = _make_client("rahasia123")
-    r = c.post("/login", data={"password": "salah"})
-    assert "Password salah" in r.text
+    r = c.post("/login", data={"username": "kozoadmin", "password": "salah"})
+    assert "Username atau password salah" in r.text
+    assert "sales_session" not in str(r.headers.get("set-cookie"))
+
+
+def test_login_username_salah(tmp_env):
+    c = _make_client("rahasia123")
+    r = c.post("/login", data={"username": "orang-lain", "password": "rahasia123"})
+    assert "Username atau password salah" in r.text
     assert "sales_session" not in str(r.headers.get("set-cookie"))
 
 
 def test_login_benar_dan_akses_dashboard(tmp_env):
     c = _make_client("rahasia123")
-    r = c.post("/login", data={"password": "rahasia123"}, follow_redirects=False)
+    r = c.post(
+        "/login", data={"username": "kozoadmin", "password": "rahasia123"},
+        follow_redirects=False,
+    )
     assert r.status_code == 302
     assert "sales_session=" in str(r.headers.get("set-cookie"))
     token = r.cookies.get("sales_session")
@@ -56,9 +68,22 @@ def test_login_benar_dan_akses_dashboard(tmp_env):
     assert c.get("/api/analytics/summary").status_code == 200
 
 
+def test_login_username_kustom(tmp_env):
+    c = _make_client("rahasia123", username="bos")
+    r = c.post(
+        "/login", data={"username": "bos", "password": "rahasia123"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert "sales_session=" in str(r.headers.get("set-cookie"))
+
+
 def test_logout_menutup_akses(tmp_env):
     c = _make_client("rahasia123")
-    r = c.post("/login", data={"password": "rahasia123"}, follow_redirects=False)
+    r = c.post(
+        "/login", data={"username": "kozoadmin", "password": "rahasia123"},
+        follow_redirects=False,
+    )
     token = r.cookies.get("sales_session")
     c.cookies.set("sales_session", token)
 

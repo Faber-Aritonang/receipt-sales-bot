@@ -137,6 +137,7 @@ async def _deny_or_request_contact(update: Update) -> None:
     Bila whitelist nomor aktif -> minta bagikan nomor untuk dicocokkan.
     Bila tidak (mis. akses dibatasi hanya lewat TELEGRAM_ALLOWED_IDS) -> tolak.
     """
+    log.info("akses ditolak untuk user %s (id telegram)", update.effective_user.id)
     if _whitelist_numbers():
         await update.message.reply_text(
             "⛔ Bot ini hanya bisa dipakai oleh nomor yang terdaftar di whitelist.\n"
@@ -220,9 +221,9 @@ async def _export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     _clear_pending_whitelist(context)
 
-    status = await update.message.reply_text(
-        "⏳ Menyiapkan file Excel…", reply_markup=_menu_markup()
-    )
+    # tanpa reply_markup: pesan dengan reply keyboard tidak bisa diedit/dihapus
+    # dengan mulus (lihat catatan di _photo)
+    status = await update.message.reply_text("⏳ Menyiapkan file Excel…")
     try:
         # generate Excel cepat tapi jalan di executor agar polling tidak macet
         loop = asyncio.get_event_loop()
@@ -235,7 +236,10 @@ async def _export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await status.delete()
     except Exception as exc:
         log.exception("gagal membuat file export dari %s", update.effective_user.id)
-        await status.edit_text(f"⚠️ Terjadi kesalahan saat membuat file Excel: {exc}")
+        try:
+            await status.edit_text(f"⚠️ Terjadi kesalahan saat membuat file Excel: {exc}")
+        except Exception:
+            pass
 
 
 def _wa_whitelist_text(result: dict) -> str:
@@ -322,6 +326,12 @@ async def _contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_whitelist(context)
     contact = update.message.contact
     phone = _normalize_phone(contact.phone_number if contact else "")
+    log.info(
+        "nomor dibagikan oleh user %s: mentah=%r ternormalisasi=%r",
+        update.effective_user.id,
+        (contact.phone_number if contact else None),
+        phone,
+    )
     if not phone:
         await update.message.reply_text("⚠️ Nomor tidak terbaca. Coba lagi.")
         return
@@ -365,9 +375,13 @@ async def _photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _deny_or_request_contact(update)
         return
 
-    status = await update.message.reply_text(
-        "⏳ Membaca struk…", reply_markup=_menu_markup()
-    )
+    # PENTING: kirim status TANPA reply_markup. Pesan yang dikirim dengan reply
+    # keyboard TIDAK bisa diedit (Telegram: "message can't be edited"), jadi
+    # kalau status dikirim dengan keyboard, edit_text() di bawah selalu gagal
+    # dan bot tampak "hang" padahal OCR sudah selesai. Keyboard persistent
+    # (is_persistent) tetap tampil karena dikendalikan pesan terakhir yang
+    # menyertakannya, bukan pesan ini.
+    status = await update.message.reply_text("⏳ Membaca struk…")
     try:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
@@ -383,7 +397,12 @@ async def _photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await status.edit_text(result["reply"], parse_mode="Markdown")
     except Exception as exc:
         log.exception("gagal memproses foto dari %s", update.effective_user.id)
-        await status.edit_text(f"⚠️ Terjadi kesalahan saat membaca struk: {exc}")
+        try:
+            await status.edit_text(f"⚠️ Terjadi kesalahan saat membaca struk: {exc}")
+        except Exception:
+            # pesan status mungkin sudah tidak bisa diedit (mis. terlalu lama /
+            # dihapus user) — jangan biarkan handler ikut error
+            pass
 
 
 def build_app(token: str) -> Application:

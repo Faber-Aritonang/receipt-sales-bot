@@ -98,10 +98,78 @@ function numberFromJid(jid) {
   return jid.split('@')[0].replace(/\D/g, '');
 }
 
+// ---------------------------------------------------------------------------
+// Pemetaan LID -> nomor telepon.
+//
+// WhatsApp kini bisa menyembunyikan nomor pengguna (privasi "nomor telepon").
+// Pengguna seperti itu muncul sebagai JID anonim (mis. 65902699643038@lid),
+// sehingga angka dari numberFromJid() tidak pernah cocok dengan whitelist
+// yang berisi nomor asli (6285771294551) -> pengguna ditolak meski sudah
+// terdaftar. Pemetaan ini diisi dari:
+//   - msg.key.senderPn (Baileys menaruh nomor asli pengirim di tiap pesan
+//     masuk dari akun LID — sumber paling andal)
+//   - contacts.upsert / contacts.update / messaging-history.set
+//     (kontak punya field `lid` dan `jid`/`id` nomor asli)
+//   - chats.phoneNumberShare (WhatsApp mengirim nomor pengguna LID saat
+//     pertama kali berinteraksi)
+// Disimpan ke file (LID_MAP_FILE) agar tetap dikenal setelah bridge
+// di-restart — event phoneNumberShare hanya dikirim SEKALI per kontak,
+// sehingga mengandalkan memori saja membuat pengguna LID ditolak lagi
+// setiap bridge restart.
+// ---------------------------------------------------------------------------
+const LID_MAP_FILE = process.env.LID_MAP_FILE || path.join(DATA_DIR, 'lid-map.json');
+const lidToPhone = new Map();
+
+// muat pemetaan lama dari disk (kalau ada)
+try {
+  const saved = JSON.parse(fs.readFileSync(LID_MAP_FILE, 'utf8'));
+  if (saved && typeof saved === 'object') {
+    for (const [lid, phone] of Object.entries(saved)) {
+      const l = normalizeNumber(lid);
+      const p = normalizeNumber(phone);
+      if (l && p && l !== p) lidToPhone.set(l, p);
+    }
+  }
+} catch (_) {
+  /* file belum ada / rusak */
+}
+
+/** Simpan pemetaan LID -> nomor ke disk (persisten lintas restart). */
+function saveLidMap() {
+  try {
+    fs.writeFileSync(LID_MAP_FILE, JSON.stringify(Object.fromEntries(lidToPhone)));
+  } catch (e) {
+    console.error('[bridge] gagal simpan pemetaan LID:', e.message);
+  }
+}
+
+/** Catat pasangan LID <-> nomor telepon (keduanya dinormalisasi ke digit). */
+function registerLidContact(lidJid, phoneJid) {
+  const lidDigits = normalizeNumber(lidJid);
+  const phoneDigits = normalizeNumber(phoneJid);
+  if (lidDigits && phoneDigits && lidDigits !== phoneDigits) {
+    lidToPhone.set(lidDigits, phoneDigits);
+    saveLidMap();
+  }
+}
+
+/**
+ * Ambil nomor telepon dari JID pengirim. Untuk akun LID (@lid), cari dulu
+ * di pemetaan; kalau belum dikenal, kembalikan angka JID apa adanya (agar
+ * tetap ditolak bila belum terdaftar).
+ */
+function resolvePhone(jid) {
+  const digits = numberFromJid(jid);
+  if (jid && jid.endsWith('@lid')) {
+    return lidToPhone.get(digits) || digits;
+  }
+  return digits;
+}
+
 /** Apakah nomor pengirim boleh memakai bot? (kosong = semua boleh) */
 function isAllowedSender(jid) {
   if (!allowedNumbers.size) return true;
-  return allowedNumbers.has(numberFromJid(jid));
+  return allowedNumbers.has(resolvePhone(jid));
 }
 
 /** Apakah format nomor masuk akal (8–15 digit, tanpa kode area yang aneh)? */
@@ -328,8 +396,11 @@ async function sendMenu(sock, jid) {
   }
 }
 
-// API free tier butuh waktu saat bangun dari tidur (cold start bisa 1-2 menit)
-const API_TIMEOUT_MS = 120000;
+// API free tier butuh waktu saat bangun dari tidur (cold start bisa 1-2 menit).
+// Foto di-OCR satu per satu (OCR_MAX_CONCURRENCY=1), jadi bila beberapa foto
+// masuk bersamaan, foto berikutnya antre — beri waktu ekstra (5 menit) agar
+// bridge tidak timeout hanya karena antrean OCR.
+const API_TIMEOUT_MS = 300000;
 
 /**
  * Kirim request ke API Python dengan toleransi cold-start.
@@ -387,6 +458,14 @@ async function forwardText(sock, jid, text) {
 
 /** Unduh foto struk dan teruskan ke Python untuk di-OCR. */
 async function handleImage(sock, msg, content, sender) {
+  // PENTING: foto TIDAK dicoba ulang (maxAttempts=1). Retry akan mengirim
+  // foto yang SAMA lagi ke API, membuat struk tercatat DUPLIKAT dan antrean
+  // OCR makin panjang (API memprosesnya dua kali). Cukup kirim sekali dengan
+  // timeout panjang; bila gagal, beri tahu pengguna untuk mencoba lagi.
+  return handleImageOnce(sock, msg, content, sender);
+}
+
+async function handleImageOnce(sock, msg, content, sender) {
   // ctx.logger diperlukan: tanpa logger, media yang butuh re-upload (view-once
   // / pesan sementara) membuat Baileys crash saat memanggil ctx.logger.info.
   const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: console });
@@ -402,16 +481,27 @@ async function handleImage(sock, msg, content, sender) {
   } catch (_) {
     /* abaikan bila gagal kirim */
   }
-  const data = await fetchApi(() => {
-    const form = new FormData();
-    form.append('sender', sender);
-    form.append('type', 'image');
-    form.append('caption', caption);
-    form.append('secret', SECRET);
-    form.append('image', new Blob([buffer], { type: 'image/jpeg' }), 'struk.jpg');
-    return form;
-  });
-  if (data && data.reply) await sendText(sock, sender, data.reply);
+  const data = await fetchApi(
+    () => {
+      const form = new FormData();
+      form.append('sender', sender);
+      form.append('type', 'image');
+      form.append('caption', caption);
+      form.append('secret', SECRET);
+      form.append('image', new Blob([buffer], { type: 'image/jpeg' }), 'struk.jpg');
+      return form;
+    },
+    1 // maxAttempts: sekali saja, tanpa retry (hindari struk duplikat)
+  );
+  if (data && data.reply) {
+    await sendText(sock, sender, data.reply);
+  } else {
+    await sendText(
+      sock,
+      sender,
+      '⚠️ Gagal memproses foto (waktu tunggu habis). Coba kirim ulang foto struk Anda.'
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +525,34 @@ function rememberSentId(id) {
   }
   // id balasan juga masuk ke set persisten -> tidak akan diproses lagi
   rememberProcessedId(id);
+}
+
+/**
+ * Cache teks yang baru saja dikirim bot — pelengkap dedup id pesan.
+ *
+ * Id pesan yang dikirim bot kadang TIDAK sama dengan id echo yang kembali
+ * sebagai pesan masuk (akun LID / chat ke diri sendiri), sehingga filter id
+ * di atas tidak mempan dan balasan bot diproses ulang sebagai perintah baru
+ * (penyebab loop "❓ Perintah tidak dikenal" yang membanjiri chat). Cache
+ * teks ini memfilter echo fromMe yang teksnya persis dengan balasan yang
+ * baru saja dikirim.
+ */
+const sentTexts = new Map(); // teks -> timestamp (ms)
+const SENT_TEXT_TTL_MS = 10 * 60 * 1000; // 10 menit
+const SENT_TEXT_MAX = 200;
+
+function rememberSentText(text) {
+  if (!text) return;
+  sentTexts.set(text, Date.now());
+  if (sentTexts.size > SENT_TEXT_MAX) {
+    sentTexts.delete(sentTexts.keys().next().value);
+  }
+}
+
+/** Apakah teks ini baru saja dikirim bot (dalam jendela TTL)? */
+function isRecentSentText(text) {
+  const t = sentTexts.get(text);
+  return !!t && Date.now() - t < SENT_TEXT_TTL_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -494,6 +612,7 @@ function isRecent(ts, maxAgeSec = 600) {
 async function sendText(sock, jid, text) {
   const sent = await sock.sendMessage(jid, { text });
   rememberSentId(sent && sent.key && sent.key.id);
+  rememberSentText(text);
   return sent;
 }
 
@@ -611,6 +730,19 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  // -----------------------------------------------------------------------
+  // Belajar pemetaan LID -> nomor telepon (lihat penjelasan di lidToPhone).
+  // -----------------------------------------------------------------------
+  const learnContacts = (contacts) => {
+    for (const c of contacts || []) {
+      if (c.lid) registerLidContact(c.lid, c.jid || c.id);
+    }
+  };
+  sock.ev.on('contacts.upsert', learnContacts);
+  sock.ev.on('contacts.update', learnContacts);
+  sock.ev.on('messaging-history.set', ({ contacts }) => learnContacts(contacts));
+  sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => registerLidContact(lid, jid));
+
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
@@ -679,6 +811,21 @@ async function start() {
       // (jangan whitelist suffix @s.whatsapp.net: akun LID bisa memakai @lid)
       if (!sender || sender === 'status@broadcast' || sender.includes('@g.us')) continue;
 
+      // Belajar pemetaan LID -> nomor asli dari tiap pesan masuk: Baileys
+      // menaruh nomor telepon pengirim di msg.key.senderPn / participantPn
+      // (mis. akun LID 65902699643038@lid dengan nomor 6285771294551).
+      // Tanpa ini, pengguna LID yang nomornya sudah di whitelist tetap
+      // ditolak karena JID-nya tidak pernah cocok.
+      if (sender.endsWith('@lid')) {
+        const pn = msg.key?.senderPn || msg.key?.participantPn;
+        if (pn) {
+          registerLidContact(sender, pn);
+          console.log('[bridge] 🆔 LID terpetakan:', sender, '->', resolvePhone(sender));
+        } else {
+          console.log('[bridge] ⚠️ LID tanpa nomor di pesan:', sender);
+        }
+      }
+
       const content = unwrapEphemeral(msg.message);
       if (!content) continue;
 
@@ -692,7 +839,7 @@ async function start() {
           '[bridge] ⛔ ditolak (nomor tidak terdaftar):',
           sender,
           '-> angka terdeteksi:',
-          numberFromJid(sender)
+          resolvePhone(sender)
         );
         try {
           await sendText(
@@ -734,6 +881,16 @@ async function start() {
         const textMsg = content.conversation || content.extendedTextMessage?.text || '';
         if (!textMsg.trim()) continue;
         const t = textMsg.trim().toLowerCase();
+
+        // 4) Echo balasan sendiri: pesan yang bridge KIRIM bisa kembali
+        //    sebagai pesan masuk dari akun sendiri (fromMe) dengan id
+        //    BERBEDA (akun LID / chat ke diri sendiri), jadi filter id di
+        //    atas tidak mempan. Teks yang baru saja dikirim bot diabaikan
+        //    agar tidak terjadi loop balasan ("Perintah tidak dikenal").
+        if (msg.key.fromMe && isRecentSentText(textMsg.trim())) {
+          console.log('[bridge] diabaikan (echo balasan sendiri):', textMsg.trim().slice(0, 50));
+          continue;
+        }
 
         // panggil menu / tombol / bantuan
         if (t === 'menu' || t === 'tombol' || t === 'bantuan' || t === '/menu' || t === '/bantuan') {
@@ -777,10 +934,14 @@ module.exports = {
   sendMenu,
   isRecent,
   numberFromJid,
+  resolvePhone,
+  registerLidContact,
   isAllowedSender,
   normalizeNumber,
   waWhitelistAdd,
   waWhitelistRemove,
   waWhitelistList,
   validPhoneNumber,
+  rememberSentText,
+  isRecentSentText,
 };

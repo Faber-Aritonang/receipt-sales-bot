@@ -71,6 +71,65 @@ start_bridge() {
   notify_telegram "⚠️ *Sales Canvas* — bridge WhatsApp di-restart otomatis oleh watchdog (PID $pid)."
 }
 
+# ---------------------------------------------------------------------------
+# Guard Tesseract: bersihkan proses OCR yang macet / menumpuk.
+#
+# Tiap foto memunculkan beberapa proses tesseract. Normalnya selesai dalam
+# hitungan detik dan dibatasi OCR_MAX_CONCURRENCY=1 (jadi maksimal ~1-2 proses
+# hidup). Bila ada proses yang hidup lebih lama dari batas timeout OCR
+# (OCR_TIMEOUT=90s) atau jumlahnya melonjak, itu tanda tesseract macet dan
+# membuat bot "hang" — bunuh yang tertua sampai normal kembali.
+# ---------------------------------------------------------------------------
+TESS_MAX_AGE=150   # detik: lebih tua dari ini = macet (OCR_TIMEOUT 90s + margin)
+TESS_MAX_COUNT=4   # lebih banyak dari ini = menumpuk (normalnya 1-2)
+
+# "mm:ss" / "hh:mm:ss" / "dd-hh:mm:ss" -> total detik
+_etime_seconds() {
+  local e="$1" days=0 h=0 m=0 s=0 rest=""
+  if [[ "$e" == *-* ]]; then
+    days="${e%%-*}"
+    e="${e#*-}"
+  fi
+  if [[ "$e" == *:*:* ]]; then
+    h="${e%%:*}"
+    rest="${e#*:}"
+    m="${rest%%:*}"
+    s="${rest#*:}"
+  else
+    m="${e%%:*}"
+    s="${e#*:}"
+  fi
+  echo $((days * 86400 + h * 3600 + m * 60 + s))
+}
+
+clean_stuck_tesseract() {
+  # kumpulkan (detik_umur, pid), urutkan umur tertua dulu
+  local entries=""
+  while read -r pid etime; do
+    [ -z "$pid" ] && continue
+    local secs; secs=$(_etime_seconds "$etime")
+    entries+="$secs $pid\n"
+  done < <(ps -eo pid=,etime=,comm= | awk '$3=="tesseract" {print $1, $2}')
+
+  [ -z "$entries" ] && return 0
+
+  local line secs pid count=0 killed=0
+  while read -r line; do
+    [ -z "$line" ] && continue
+    secs="${line%% *}"
+    pid="${line##* }"
+    count=$((count + 1))
+    if [ "$secs" -gt "$TESS_MAX_AGE" ] || [ "$count" -gt "$TESS_MAX_COUNT" ]; then
+      kill -9 "$pid" 2>/dev/null && killed=$((killed + 1))
+    fi
+  done < <(printf "%b" "$entries" | sort -rn)
+
+  if [ "$killed" -gt 0 ]; then
+    log "tesseract macet/menumpuk ($count proses) -> $killed dibunuh"
+    notify_telegram "⚠️ *Sales Canvas* — ${killed} proses tesseract macet dibunuh watchdog (total ${count})."
+  fi
+}
+
 log "watchdog dimulai (interval ${CHECK_INTERVAL}s) di $ROOT"
 
 while true; do
@@ -95,6 +154,9 @@ while true; do
     sleep 1
     start_bridge
   fi
+
+  # --- tesseract: bunuh proses OCR yang macet / menumpuk (sebelum bikin hang) ---
+  clean_stuck_tesseract
 
   sleep "$CHECK_INTERVAL"
 done

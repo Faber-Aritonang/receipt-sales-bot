@@ -10,9 +10,11 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-// file whitelist sementara agar test tidak menyentuh file asli
+// file whitelist & pemetaan LID sementara agar test tidak menyentuh file asli
 const TMP_FILE = path.join(os.tmpdir(), `whitelist-test-${process.pid}.json`);
+const TMP_LID = path.join(os.tmpdir(), `lidmap-test-${process.pid}.json`);
 process.env.WHATSAPP_ALLOW_LIST_FILE = TMP_FILE;
+process.env.LID_MAP_FILE = TMP_LID;
 process.env.WHATSAPP_ALLOWED_NUMBERS = '';
 
 const bridge = require('../whatsapp-bridge/index.js');
@@ -33,6 +35,7 @@ function assert(cond, label) {
 function reset() {
   try {
     fs.rmSync(TMP_FILE, { force: true });
+    fs.rmSync(TMP_LID, { force: true });
   } catch (_) {
     /* abaikan */
   }
@@ -130,10 +133,50 @@ console.log('\n── isAllowedSender ──');
   assert(m.isAllowedSender(null) === false, 'jid kosong -> ditolak');
 }
 
+// ---------------------------------------------------------------- akun LID (@lid)
+console.log('\n── akun LID (privasi nomor) ──');
+{
+  const m = reset();
+  m.waWhitelistAdd('628123456789');
+  // tanpa pemetaan, LID ditolak (angka LID tidak cocok whitelist)
+  assert(
+    m.isAllowedSender('65902699643038@lid') === false,
+    'LID tanpa pemetaan -> ditolak'
+  );
+  // begitu WhatsApp membagikan nomornya, LID terselesaikan ke nomor asli
+  m.registerLidContact('65902699643038@lid', '628123456789@s.whatsapp.net');
+  assert(
+    m.resolvePhone('65902699643038@lid') === '628123456789',
+    'resolvePhone mengembalikan nomor asli dari LID'
+  );
+  assert(
+    m.isAllowedSender('65902699643038@lid') === true,
+    'LID yang sudah dipetakan ke nomor terdaftar -> boleh'
+  );
+  // LID lain yang nomornya tidak terdaftar tetap ditolak
+  m.registerLidContact('777798912163960@lid', '6289999999999@s.whatsapp.net');
+  assert(
+    m.isAllowedSender('777798912163960@lid') === false,
+    'LID -> nomor asing -> ditolak'
+  );
+}
+
 console.log('\n── mode terbuka (whitelist kosong) ──');
 {
   const m = reset(); // tanpa add apa pun -> set kosong
   assert(m.isAllowedSender('6289999999999@s.whatsapp.net') === true, 'set kosong -> semua boleh');
+}
+
+// ---------------------------------------------------------------- echo balasan sendiri
+console.log('\n── filter echo balasan sendiri (anti loop) ──');
+{
+  const m = reset();
+  assert(m.isRecentSentText('laporan harian') === false, 'teks belum pernah dikirim -> tetap diproses');
+  m.rememberSentText('📆 *LAPORAN HARIAN*');
+  assert(m.isRecentSentText('📆 *LAPORAN HARIAN*') === true, 'teks baru saja dikirim bot -> echo diabaikan');
+  assert(m.isRecentSentText('laporan harian') === false, 'perintah user (beda teks) tidak ikut terfilter');
+  m.rememberSentText('');
+  assert(m.isRecentSentText('') === false, 'teks kosong tidak dicatat');
 }
 
 // ---------------------------------------------------------------- pembersihan
