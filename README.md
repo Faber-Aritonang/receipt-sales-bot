@@ -1,5 +1,15 @@
 # 🧾 Sales Canvas Bot — Telegram & WhatsApp
 
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)
+![Baileys](https://img.shields.io/badge/Baileys-6.x-25D366?logo=whatsapp&logoColor=white)
+![Tesseract OCR](https://img.shields.io/badge/Tesseract_OCR-ind%2Beng-5C2D91?logo=tesseract&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
+
+> **Proyek portofolio:** bot pembukuan penjualan otomatis dari foto struk —
+> OCR → parser struk Indonesia → database → laporan & dashboard analisa.
+
 Bot yang menerima **laporan sales berupa foto struk**, membacanya otomatis (OCR),
 menyimpan ke **database SQLite**, lalu menyediakan **analisa data** lewat:
 perintah di bot (Telegram & WhatsApp) dan **dashboard web** (grafik).
@@ -10,6 +20,27 @@ foto struk ──▶ WhatsApp bot ──┼──▶ OCR (Tesseract) ──▶ P
                               │                                        │
 perintah laporan ◀────────────┘            dashboard web ◀─────────────┘
 ```
+
+### 🖥️ Live Demo
+
+- **Dashboard:** https://<nama-api>.onrender.com (login `kozoadmin` + password)
+- **Bot Telegram:** cari `@rceipt_sales_bot` di Telegram
+- **Bot WhatsApp:** kirim foto struk ke nomor bot (setelah QR di-scan)
+
+> Deployment memakai [Render](https://render.com) free tier (lihat bagian
+> *Deploy ke Render* di bawah). Ganti `<nama-api>` dengan nama service
+> `sales-bot-api` yang muncul di dashboard Render.
+
+### 📸 Tangkapan Layar
+
+**Dashboard analisa penjualan** — total pendapatan, grafik harian, produk terlaris,
+metode pembayaran, dan struk terbaru:
+
+![Dashboard Sales Canvas](docs/screenshots/dashboard.png)
+
+**Halaman login** (username + password):
+
+![Login Sales Canvas](docs/screenshots/login.png)
 
 ---
 
@@ -29,7 +60,9 @@ perintah laporan ◀────────────┘            dashboard
 | 🛡️ Anti respond-sendiri | dedup id pesan (tersimpan ke file) + filter pesan lama dari perangkat sendiri — bot tidak membalas pesan lama/duplikat |
 | 🗄️ Backup otomatis | DB SQLite di-backup otomatis ke `data/backup/` (tiap start + harian), disimpan 7 hari |
 | ♻️ Auto-restart | `scripts/watchdog.sh` memantau & me-restart bridge WhatsApp dan server API bila mati |
-| ✅ Unit test | `pytest tests/` (41 test) — parser, perintah bot, analytics, alur login, ekspor |
+| 🛡️ Guard OCR | timeout + batas konkurensi tesseract (anti-hang saat banyak foto masuk); watchdog membunuh proses OCR macet otomatis |
+| 🔑 Login dashboard | username + password (`DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`) melindungi dashboard & seluruh API |
+| ✅ Unit test | `pytest tests/` (69 test) — parser, perintah bot, analytics, alur login, ekspor |
 | 🔌 Tanpa sudo | Tesseract bisa disalin ke folder `vendor/` (sudah disertakan) |
 
 ---
@@ -332,6 +365,7 @@ Dashboard: `https://<nama-api>.onrender.com/dashboard`.
 | `TELEGRAM_BOT_TOKEN` | Token dari BotFather (kosong = bot Telegram nonaktif) |
 | `TELEGRAM_ALLOWED_IDS` | ID pengguna yang boleh memakai bot tanpa verifikasi nomor (kosong = hanya whitelist nomor yang berlaku) |
 | `BRIDGE_WEBHOOK_SECRET` | Rahasia bersama bridge Node ↔ server Python |
+| `DASHBOARD_USERNAME` | Username login dashboard (default `kozoadmin`) |
 | `DASHBOARD_PASSWORD` | Password untuk membuka dashboard (kosong = tanpa login; API lain ikut terlindungi) |
 | `WATCHDOG_NOTIFY_CHAT_ID` | Chat id Telegram untuk notifikasi restart watchdog (opsional) |
 | `BACKUP_KEEP_DAYS` | Berapa hari backup DB disimpan di `data/backup/` (default 7) |
@@ -350,15 +384,16 @@ Dashboard: `https://<nama-api>.onrender.com/dashboard`.
 node scripts/test_whitelist.js   # unit test whitelist WhatsApp (tanpa koneksi)
 ```
 
-52 test Python mencakup: parser struk (`app/parser.py`), perintah bot
+69 test Python mencakup: parser struk (`app/parser.py`), perintah bot
 (`app/process.py` — termasuk bentuk nomor menu & bahasa alami), analytics
 (`app/analytics.py` — termasuk struk tanpa tanggal), alur login dashboard
-(`app/web/server.py`), ekspor Excel (`app/export.py`), klien whitelist
-(`app/whitelist.py`), dan alur tombol whitelist di bot Telegram (minta nomor →
-proses; `/whitelist` tidak memicu ekspor; `/export` mengirim file). Test
-memakai database sementara — data asli di `data/` tidak pernah tersentuh.
-Test Node mencakup logika whitelist di bridge (normalisasi nomor,
-add/remove/list, guard nomor terakhir, `isAllowedSender`).
+(username+password, logout, proteksi API — `app/web/server.py`), ekspor Excel
+(`app/export.py`), klien whitelist (`app/whitelist.py`), dan alur tombol
+whitelist di bot Telegram (minta nomor → proses; `/whitelist` tidak memicu
+ekspor; `/export` mengirim file). Test memakai database sementara — data asli
+di `data/` tidak pernah tersentuh. Test Node (33 test) mencakup logika
+whitelist di bridge (normalisasi nomor, add/remove/list, guard nomor terakhir,
+`isAllowedSender`, pemetaan akun LID).
 
 ## 🗄️ Backup Otomatis
 
