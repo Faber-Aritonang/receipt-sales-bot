@@ -23,13 +23,12 @@ perintah laporan ◀────────────┘            dashboard
 
 ### 🖥️ Live Demo
 
-- **Dashboard:** https://<nama-api>.onrender.com (login `kozoadmin` + password)
+- **Dashboard:** https://sales-bot-api-ha3l.onrender.com (login `kozoadmin` + password)
 - **Bot Telegram:** cari `@rceipt_sales_bot` di Telegram
 - **Bot WhatsApp:** kirim foto struk ke nomor bot (setelah QR di-scan)
 
 > Deployment memakai [Render](https://render.com) free tier (lihat bagian
-> *Deploy ke Render* di bawah). Ganti `<nama-api>` dengan nama service
-> `sales-bot-api` yang muncul di dashboard Render.
+> *Deploy ke Render* di bawah).
 
 ### 📸 Tangkapan Layar
 
