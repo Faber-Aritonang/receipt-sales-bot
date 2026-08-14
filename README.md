@@ -26,6 +26,7 @@ perintah laporan ◀────────────┘            dashboard
 - **Dashboard:** https://sales-bot-api-ha3l.onrender.com (login `kozoadmin` + password)
 - **Bot Telegram:** cari `@rceipt_sales_bot` di Telegram
 - **Bot WhatsApp:** kirim foto struk ke nomor bot (setelah QR di-scan)
+- **QR WhatsApp:** https://sales-bot-bridge.onrender.com/qr (password sama dengan dashboard)
 
 > Deployment memakai [Render](https://render.com) free tier (lihat bagian
 > *Deploy ke Render* di bawah).
@@ -40,6 +41,18 @@ metode pembayaran, dan struk terbaru:
 **Halaman login** (username + password):
 
 ![Login Sales Canvas](docs/screenshots/login.png)
+
+**Live demo (Render) — dashboard dengan data terbaru:**
+
+![Dashboard Render](docs/screenshots/demo-dashboard.png)
+
+**Live demo — halaman login di Render:**
+
+![Login Render](docs/screenshots/demo-login.png)
+
+**Live demo — halaman QR WhatsApp (untuk menautkan perangkat):**
+
+![QR WhatsApp Render](docs/screenshots/demo-qr.png)
 
 ---
 
